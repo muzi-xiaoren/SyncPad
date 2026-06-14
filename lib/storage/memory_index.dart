@@ -1,34 +1,27 @@
 import 'package:flutter/foundation.dart';
 
 import '../models/note.dart';
+import '../settings/app_settings.dart';
 
-/// 内存里的"活记录"索引：record_id → 最新一条 LogRecord。
+/// 内存里的"活记录"索引：record_id → 最新一条 [LogRecord]（含软删除项）。
 /// 启动时由 [replay] 一次性扫日志构建；之后所有 CRUD 都直接动它。
 ///
-/// 同时是 [ChangeNotifier]：任何写操作（[apply]/[replay]）后都会通知监听者，
-/// 让列表/编辑界面无需手动 setState 即可热更新。
+/// 软删除（回收站）的记录仍留在索引里（带 deletedAt），只有 DEL（彻底删）才移除。
+/// 是 [ChangeNotifier]：任何写操作后通知监听者，列表/编辑界面自动热更新。
 class MemoryIndex extends ChangeNotifier {
   final Map<String, LogRecord> _records = {};
 
   int get totalLineCount => _scannedLines;
   int _scannedLines = 0;
 
+  /// 日志里活记录条数（含软删除），用于压实放大率。
   int get activeCount => _records.length;
 
-  /// 总行数 / 有效记录数 ≥ ratio 时建议 compact。
   double get amplification =>
       _records.isEmpty ? 0 : _scannedLines / _records.length;
 
   Iterable<LogRecord> get activeRecords => _records.values;
 
-  /// 全部活记录，按更新时间倒序（最新在前），用于列表默认展示。
-  List<LogRecord> get recordsByUpdatedDesc {
-    final out = _records.values.toList()
-      ..sort((a, b) => b.ts.compareTo(a.ts));
-    return out;
-  }
-
-  /// 用日志记录 replay 出最新状态。同 id 后写覆盖前写；DEL 移除。
   void replay(List<LogRecord> log) {
     _records.clear();
     _scannedLines = log.length;
@@ -44,7 +37,6 @@ class MemoryIndex extends ChangeNotifier {
     notifyListeners();
   }
 
-  /// 把一条新追加的日志应用到内存（不重置扫描计数）。
   void apply(LogRecord r) {
     _scannedLines += 1;
     switch (r.op) {
@@ -57,25 +49,86 @@ class MemoryIndex extends ChangeNotifier {
     notifyListeners();
   }
 
-  /// 全文检索：把查询串按空白拆词，要求每个词都出现在 标题 或 正文 里
-  /// （大小写不敏感）。空查询返回全部（按更新时间倒序）。
-  List<LogRecord> search(String query) {
+  LogRecord? get(String id) => _records[id];
+  Note? getNote(String id) {
+    final r = _records[id];
+    return r == null ? null : Note.fromRecord(r);
+  }
+
+  Iterable<Note> get _allNotes => _records.values.map(Note.fromRecord);
+
+  /// 某类型的未删除条目（可选按文件夹过滤），按 [sort] 排序（置顶优先）。
+  List<Note> byKind(
+    NoteKind kind, {
+    String? folder,
+    NoteSort sort = NoteSort.updatedDesc,
+  }) {
+    final out = _allNotes
+        .where((n) => n.kind == kind && !n.isDeleted)
+        .where((n) => folder == null || folder.isEmpty || n.folder == folder)
+        .toList()
+      ..sort((a, b) => _cmp(a, b, sort));
+    return out;
+  }
+
+  /// 检索某类型的未删除条目（标题 + 正文/清单项，全词命中、大小写不敏感）。
+  List<Note> search(
+    String query, {
+    required NoteKind kind,
+    String? folder,
+    NoteSort sort = NoteSort.updatedDesc,
+  }) {
+    final base = byKind(kind, folder: folder, sort: sort);
     final terms = query
         .toLowerCase()
         .split(RegExp(r'\s+'))
         .where((t) => t.isNotEmpty)
         .toList(growable: false);
-    if (terms.isEmpty) return recordsByUpdatedDesc;
-    final out = <LogRecord>[];
-    for (final r in recordsByUpdatedDesc) {
-      final haystack = '${r.title ?? ''}\n${r.body ?? ''}'.toLowerCase();
-      if (terms.every(haystack.contains)) {
-        out.add(r);
+    if (terms.isEmpty) return base;
+    return base.where((n) {
+      final haystack = StringBuffer(n.title)
+        ..write('\n')
+        ..write(n.body);
+      for (final it in n.items) {
+        haystack
+          ..write('\n')
+          ..write(it.text);
       }
-    }
+      final hay = haystack.toString().toLowerCase();
+      return terms.every(hay.contains);
+    }).toList();
+  }
+
+  /// 回收站：所有软删除条目，按删除时间倒序。
+  List<Note> trashed() {
+    final out = _allNotes.where((n) => n.isDeleted).toList()
+      ..sort((a, b) => (b.deletedAt ?? b.updatedAt)
+          .compareTo(a.deletedAt ?? a.updatedAt));
     return out;
   }
 
-  /// 给定 record_id 查找当前活记录，找不到返回 null。
-  LogRecord? get(String id) => _records[id];
+  /// 全部未删除条目里出现过的文件夹名（去重、排序）。
+  List<String> folders() {
+    final set = <String>{};
+    for (final n in _allNotes) {
+      if (!n.isDeleted && n.folder.isNotEmpty) set.add(n.folder);
+    }
+    final out = set.toList()..sort();
+    return out;
+  }
+
+  int countInFolder(NoteKind kind, String? folder) =>
+      byKind(kind, folder: folder).length;
+
+  int get trashCount => _allNotes.where((n) => n.isDeleted).length;
+
+  static int _cmp(Note a, Note b, NoteSort sort) {
+    if (a.pinned != b.pinned) return a.pinned ? -1 : 1;
+    return switch (sort) {
+      NoteSort.updatedDesc => b.updatedAt.compareTo(a.updatedAt),
+      NoteSort.createdDesc => b.createdAt.compareTo(a.createdAt),
+      NoteSort.titleAsc =>
+        a.title.toLowerCase().compareTo(b.title.toLowerCase()),
+    };
+  }
 }

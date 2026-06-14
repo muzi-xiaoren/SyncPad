@@ -2,28 +2,35 @@ import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
 import '../app_state.dart';
+import '../models/note.dart';
 import 'note_actions.dart';
 import 'note_palette.dart';
 
-/// 笔记编辑页。[noteId] 为 null 表示新建（可带 [initialFolder]）。
-/// 返回时自动保存（空笔记不创建；无变化不写日志）。
-class EditNotePage extends StatefulWidget {
-  const EditNotePage({super.key, this.noteId, this.initialFolder = ''});
+/// 待办（清单）编辑页。[noteId] 为 null 表示新建。
+class EditTodoPage extends StatefulWidget {
+  const EditTodoPage({super.key, this.noteId, this.initialFolder = ''});
 
   final String? noteId;
   final String initialFolder;
 
   @override
-  State<EditNotePage> createState() => _EditNotePageState();
+  State<EditTodoPage> createState() => _EditTodoPageState();
 }
 
-class _EditNotePageState extends State<EditNotePage> {
+class _TodoLine {
+  _TodoLine(String text, this.done) : controller = TextEditingController(text: text);
+  final TextEditingController controller;
+  bool done;
+}
+
+class _EditTodoPageState extends State<EditTodoPage> {
   final _title = TextEditingController();
-  final _body = TextEditingController();
+  final List<_TodoLine> _lines = [];
   String? _noteId;
   int _color = 0;
   bool _pinned = false;
   String _folder = '';
+  late String _initialSnapshot;
 
   @override
   void initState() {
@@ -35,45 +42,67 @@ class _EditNotePageState extends State<EditNotePage> {
       final note = app.repo.getNote(_noteId!);
       if (note != null) {
         _title.text = note.title;
-        _body.text = note.body;
         _color = note.color;
         _pinned = note.pinned;
         _folder = note.folder;
+        for (final it in note.items) {
+          _lines.add(_TodoLine(it.text, it.done));
+        }
       }
     }
+    if (_lines.isEmpty) _lines.add(_TodoLine('', false));
+    _initialSnapshot = _snapshot();
   }
 
   @override
   void dispose() {
     _title.dispose();
-    _body.dispose();
+    for (final l in _lines) {
+      l.controller.dispose();
+    }
     super.dispose();
   }
 
-  bool get _isEmpty => _title.text.trim().isEmpty && _body.text.trim().isEmpty;
+  String _snapshot() {
+    final sb = StringBuffer(_title.text.trim());
+    for (final l in _lines) {
+      sb.write('${l.done ? 1 : 0}:${l.controller.text.trim()}');
+    }
+    return sb.toString();
+  }
+
+  List<ChecklistItem> _collectItems() {
+    final items = <ChecklistItem>[];
+    for (final l in _lines) {
+      final t = l.controller.text.trim();
+      if (t.isEmpty) continue;
+      items.add(ChecklistItem(text: t, done: l.done));
+    }
+    return items;
+  }
 
   Future<void> _save() async {
     final app = context.read<AppState>();
     final title = _title.text.trim();
-    final body = _body.text;
+    final items = _collectItems();
     if (_noteId == null) {
-      if (_isEmpty) return;
-      final id = await app.repo
-          .addNote(title: title, body: body, color: _color, folder: _folder);
+      if (title.isEmpty && items.isEmpty) return;
+      final id = await app.repo.addTodo(
+        title: title,
+        items: items,
+        color: _color,
+        folder: _folder,
+      );
       _noteId = id;
       if (_pinned) await app.repo.setPinned(id, true);
-      await app.maybePushAfterEdit('add note');
+      await app.maybePushAfterEdit('add todo');
     } else {
-      final cur = app.repo.getNote(_noteId!);
-      if (cur == null) return;
-      if (cur.title != title || cur.body != body) {
-        await app.repo.updateNote(id: _noteId!, title: title, body: body);
-        await app.maybePushAfterEdit('update note');
-      }
+      if (_snapshot() == _initialSnapshot) return; // 无变化
+      await app.repo.updateTodo(id: _noteId!, title: title, items: items);
+      await app.maybePushAfterEdit('update todo');
     }
   }
 
-  // 颜色/置顶/文件夹：已保存的笔记即时写入；未保存的先存到本地状态，保存时一并落库。
   Future<void> _pickColor() async {
     final app = context.read<AppState>();
     final picked = await pickColorIndex(context, _color);
@@ -81,7 +110,7 @@ class _EditNotePageState extends State<EditNotePage> {
     setState(() => _color = picked);
     if (_noteId != null) {
       await app.repo.setColor(_noteId!, picked);
-      await app.maybePushAfterEdit('color note');
+      await app.maybePushAfterEdit('color todo');
     }
   }
 
@@ -90,7 +119,7 @@ class _EditNotePageState extends State<EditNotePage> {
     setState(() => _pinned = !_pinned);
     if (_noteId != null) {
       await app.repo.setPinned(_noteId!, _pinned);
-      await app.maybePushAfterEdit('pin note');
+      await app.maybePushAfterEdit('pin todo');
     }
   }
 
@@ -102,7 +131,7 @@ class _EditNotePageState extends State<EditNotePage> {
     setState(() => _folder = picked);
     if (_noteId != null) {
       await app.repo.setFolder(_noteId!, picked);
-      await app.maybePushAfterEdit('move note');
+      await app.maybePushAfterEdit('move todo');
     }
   }
 
@@ -114,9 +143,20 @@ class _EditNotePageState extends State<EditNotePage> {
       return;
     }
     await app.repo.moveToTrash(_noteId!);
-    await app.maybePushAfterEdit('trash note');
-    _noteId = null; // 阻止 PopScope 再次保存
+    await app.maybePushAfterEdit('trash todo');
+    _noteId = null;
     nav.pop();
+  }
+
+  void _addLine() {
+    setState(() => _lines.add(_TodoLine('', false)));
+  }
+
+  void _removeLine(int i) {
+    setState(() {
+      _lines.removeAt(i).controller.dispose();
+      if (_lines.isEmpty) _lines.add(_TodoLine('', false));
+    });
   }
 
   @override
@@ -172,37 +212,67 @@ class _EditNotePageState extends State<EditNotePage> {
             ),
           ],
         ),
-        body: Padding(
-          padding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.stretch,
-            children: [
-              TextField(
+        body: ListView(
+          padding: const EdgeInsets.fromLTRB(16, 0, 8, 24),
+          children: [
+            Padding(
+              padding: const EdgeInsets.only(right: 8),
+              child: TextField(
                 controller: _title,
-                textInputAction: TextInputAction.next,
                 style: theme.textTheme.titleLarge
                     ?.copyWith(fontWeight: FontWeight.bold),
                 decoration: const InputDecoration(
-                  hintText: '标题',
+                  hintText: '清单标题（可选）',
                   border: InputBorder.none,
                 ),
               ),
-              const Divider(height: 8),
-              Expanded(
-                child: TextField(
-                  controller: _body,
-                  expands: true,
-                  maxLines: null,
-                  textAlignVertical: TextAlignVertical.top,
-                  keyboardType: TextInputType.multiline,
-                  decoration: const InputDecoration(
-                    hintText: '在这里写点什么…',
-                    border: InputBorder.none,
+            ),
+            const Divider(height: 8),
+            for (var i = 0; i < _lines.length; i++)
+              Row(
+                key: ObjectKey(_lines[i]),
+                children: [
+                  IconButton(
+                    icon: Icon(
+                      _lines[i].done
+                          ? Icons.check_box
+                          : Icons.check_box_outline_blank,
+                      color: _lines[i].done
+                          ? const Color(0xFFFFB300)
+                          : theme.colorScheme.outline,
+                    ),
+                    onPressed: () =>
+                        setState(() => _lines[i].done = !_lines[i].done),
                   ),
-                ),
+                  Expanded(
+                    child: TextField(
+                      controller: _lines[i].controller,
+                      textInputAction: TextInputAction.next,
+                      onSubmitted: (_) => _addLine(),
+                      style: TextStyle(
+                        decoration: _lines[i].done
+                            ? TextDecoration.lineThrough
+                            : null,
+                      ),
+                      decoration: const InputDecoration(
+                        hintText: '清单项',
+                        border: InputBorder.none,
+                        isDense: true,
+                      ),
+                    ),
+                  ),
+                  IconButton(
+                    icon: const Icon(Icons.close, size: 18),
+                    onPressed: () => _removeLine(i),
+                  ),
+                ],
               ),
-            ],
-          ),
+            TextButton.icon(
+              onPressed: _addLine,
+              icon: const Icon(Icons.add),
+              label: const Text('添加一项'),
+            ),
+          ],
         ),
       ),
     );

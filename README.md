@@ -3,7 +3,17 @@
 跨平台、本地优先的开源记事本，内置**免费的 Git / WebDAV 云同步**。
 
 > 架构脱胎于 [PassPro](../PassPro)（密码管理器）：同样的 append-only 行式日志 + 内存索引 +
-> 主备同步，只是把"密码条目"换成了"笔记"。
+> 主备同步，只是把"密码条目"换成了"笔记"。界面取材小米笔记 / Apple Notes / Google Keep。
+
+## 功能
+
+- **双 Tab**：笔记（彩色宫格 / 列表）+ 待办（可勾选清单）
+- **彩色卡片**：9 色配色板，宫格(masonry)瀑布流布局
+- **置顶**、**文件夹**分类、**全文搜索**（标题 / 正文 / 清单项）
+- **待办清单**：多项勾选、进度 x/y、单行待办
+- **回收站**：软删除 → 可恢复 / 彻底删除 / 清空
+- **排序**（修改时间 / 创建时间 / 标题）、**布局**（宫格 / 列表）、**文字大小**
+- **免费云同步**：GitHub / Gitee 私有仓 + 坚果云 WebDAV，主备模式，多端行级合并
 
 ## 设计要点
 
@@ -41,7 +51,7 @@
 | iOS     | 应用沙盒 `…/Library/Application Support/SyncPad/notes.log` |
 
 > Token / 应用密码存于系统钥匙串（Android Keystore / macOS Keychain / Win DPAPI），不在上述目录里。
-> v0.1 笔记内容以**明文**存放在你的（私有）仓库里；端到端加密见路线图。
+> 笔记内容以**明文**存放在你的（私有）仓库里（按设计，不加密）。
 
 ## 目录结构
 
@@ -67,12 +77,16 @@ SyncPad/
 │   │   ├── app_settings.dart        # SharedPreferences
 │   │   └── secure_credential_store.dart  # Token / 应用密码走 OS Keychain
 │   └── ui/
-│       ├── home_page.dart           # 笔记列表 + 搜索 + 同步按钮
-│       ├── edit_note_page.dart      # 编辑（返回即保存）
-│       └── settings_page.dart       # 云同步配置 + 维护 + 关于
+│       ├── home_page.dart           # 双 Tab：笔记宫格 + 待办列表 + 搜索
+│       ├── edit_note_page.dart      # 笔记编辑（颜色/置顶/文件夹/删除）
+│       ├── edit_todo_page.dart      # 待办清单编辑
+│       ├── trash_page.dart          # 最近删除（回收站）
+│       ├── note_actions.dart        # 长按菜单 / 调色板 / 文件夹选择
+│       ├── note_palette.dart        # 卡片配色板
+│       └── settings_page.dart       # 云同步 + 笔记样式 + 数据 + 关于
 ├── test/
 │   ├── merge_test.dart              # 合并 + 序列化往返
-│   └── widget_test.dart             # 内存索引 + 检索
+│   └── widget_test.dart             # 内存索引（筛选/检索/回收站/文件夹）
 ```
 
 ## 准备环境 & 运行
@@ -116,11 +130,13 @@ flutter build macos --release        # macOS    → build/macos/Build/Products/R
 
 ## 路线图
 
-- [ ] **端到端加密**：把 PassPro 的 `FernetCrypto` 搬过来对 `body` 加密（日志格式不变，仅密文化 `b` 字段）。
-- [ ] **CRDT 文本合并**（Yjs / Automerge）：真正的并发编辑无损合并。
-- [ ] Markdown 预览 / 标签 / 文件夹。
+- [ ] **CRDT 文本合并**（Yjs / Automerge）：真正的并发编辑无损合并（当前为每篇 last-write-wins）。
+- [ ] 提醒 / 待办到期通知。
+- [ ] Markdown 预览、图片附件。
 - [ ] 多语言 i18n（当前界面为简体中文）。
-- [ ] 桌面窗口位置记忆、同步前后提示等 PassPro 已有的体验细节。
+- [ ] 桌面窗口位置记忆、回收站 30 天自动清理。
+
+> 不做端到端加密 —— 按设计，笔记明文存于你的私有仓库。
 
 ## 许可证
 

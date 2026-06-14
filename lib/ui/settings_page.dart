@@ -7,6 +7,7 @@ import '../storage/memory_index.dart';
 import '../sync/git_backend.dart';
 import '../sync/sync_backend.dart';
 import '../sync/webdav_backend.dart';
+import 'trash_page.dart';
 
 class SettingsPage extends StatelessWidget {
   const SettingsPage({super.key});
@@ -58,6 +59,70 @@ class SettingsPage extends StatelessWidget {
               onTap: () => _overwriteRemote(context),
             ),
           ],
+
+          const Divider(),
+          // ============ 笔记样式 ============
+          const _SectionHeader('笔记样式'),
+          ListTile(
+            leading: const Icon(Icons.format_size),
+            title: const Text('文字大小'),
+            trailing: DropdownButton<TextSizePref>(
+              value: settings.textSize,
+              underline: const SizedBox.shrink(),
+              onChanged: (v) {
+                if (v != null) settings.setTextSize(v);
+              },
+              items: const [
+                DropdownMenuItem(value: TextSizePref.small, child: Text('较小')),
+                DropdownMenuItem(value: TextSizePref.normal, child: Text('默认')),
+                DropdownMenuItem(value: TextSizePref.large, child: Text('较大')),
+              ],
+            ),
+          ),
+          ListTile(
+            leading: const Icon(Icons.sort),
+            title: const Text('排序方式'),
+            trailing: DropdownButton<NoteSort>(
+              value: settings.sort,
+              underline: const SizedBox.shrink(),
+              onChanged: (v) {
+                if (v != null) settings.setSort(v);
+              },
+              items: const [
+                DropdownMenuItem(
+                    value: NoteSort.updatedDesc, child: Text('按修改时间')),
+                DropdownMenuItem(
+                    value: NoteSort.createdDesc, child: Text('按创建时间')),
+                DropdownMenuItem(value: NoteSort.titleAsc, child: Text('按标题')),
+              ],
+            ),
+          ),
+          ListTile(
+            leading: const Icon(Icons.grid_view),
+            title: const Text('笔记列表布局'),
+            trailing: DropdownButton<NoteLayout>(
+              value: settings.layout,
+              underline: const SizedBox.shrink(),
+              onChanged: (v) {
+                if (v != null) settings.setLayout(v);
+              },
+              items: const [
+                DropdownMenuItem(value: NoteLayout.grid, child: Text('宫格')),
+                DropdownMenuItem(value: NoteLayout.list, child: Text('列表')),
+              ],
+            ),
+          ),
+
+          const Divider(),
+          // ============ 数据 ============
+          const _SectionHeader('数据'),
+          ListTile(
+            leading: const Icon(Icons.delete_outline),
+            title: const Text('最近删除'),
+            trailing: const Icon(Icons.chevron_right),
+            onTap: () => Navigator.of(context).push(
+                MaterialPageRoute(builder: (_) => const TrashPage())),
+          ),
 
           const Divider(),
           // ============ 维护 ============
@@ -195,7 +260,7 @@ class _AboutSection extends StatelessWidget {
             ],
           ),
           const SizedBox(height: 8),
-          const Text('版本 0.1.0'),
+          const Text('版本 0.2.0'),
           const SizedBox(height: 4),
           const Text('本地优先 · 免费 Git/WebDAV 云同步的开源记事本'),
           const SizedBox(height: 8),

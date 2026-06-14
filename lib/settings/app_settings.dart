@@ -7,6 +7,23 @@ enum BackendKind { github, gitee, webdav }
 
 enum BackendRole { primary, mirror }
 
+/// 笔记排序方式。
+enum NoteSort { updatedDesc, createdDesc, titleAsc }
+
+/// 笔记列表布局：宫格(masonry) / 列表。
+enum NoteLayout { grid, list }
+
+/// 笔记内容文字大小。
+enum TextSizePref { small, normal, large }
+
+extension TextSizePrefScale on TextSizePref {
+  double get scale => switch (this) {
+        TextSizePref.small => 0.9,
+        TextSizePref.normal => 1.0,
+        TextSizePref.large => 1.2,
+      };
+}
+
 class BackendConfig {
   final BackendKind kind;
   final bool enabled;
@@ -91,6 +108,9 @@ class AppSettings extends ChangeNotifier {
   static const _kBackendGithub = 'backend_github_json';
   static const _kBackendGitee = 'backend_gitee_json';
   static const _kBackendWebDav = 'backend_webdav_json';
+  static const _kSort = 'note_sort';
+  static const _kLayout = 'note_layout';
+  static const _kTextSize = 'note_text_size';
 
   final SharedPreferences _prefs;
 
@@ -106,6 +126,21 @@ class AppSettings extends ChangeNotifier {
 
   /// 新增/编辑/删除后自动推送到远端。默认开。
   bool get pushAfterEdit => _prefs.getBool(_kPushAfterEdit) ?? true;
+
+  NoteSort get sort => NoteSort.values.firstWhere(
+        (e) => e.name == _prefs.getString(_kSort),
+        orElse: () => NoteSort.updatedDesc,
+      );
+
+  NoteLayout get layout => NoteLayout.values.firstWhere(
+        (e) => e.name == _prefs.getString(_kLayout),
+        orElse: () => NoteLayout.grid,
+      );
+
+  TextSizePref get textSize => TextSizePref.values.firstWhere(
+        (e) => e.name == _prefs.getString(_kTextSize),
+        orElse: () => TextSizePref.normal,
+      );
 
   BackendConfig get github => _loadBackend(_kBackendGithub, BackendKind.github);
   BackendConfig get gitee => _loadBackend(_kBackendGitee, BackendKind.gitee);
@@ -166,6 +201,21 @@ class AppSettings extends ChangeNotifier {
 
   Future<void> setPushAfterEdit(bool v) async {
     await _prefs.setBool(_kPushAfterEdit, v);
+    notifyListeners();
+  }
+
+  Future<void> setSort(NoteSort v) async {
+    await _prefs.setString(_kSort, v.name);
+    notifyListeners();
+  }
+
+  Future<void> setLayout(NoteLayout v) async {
+    await _prefs.setString(_kLayout, v.name);
+    notifyListeners();
+  }
+
+  Future<void> setTextSize(TextSizePref v) async {
+    await _prefs.setString(_kTextSize, v.name);
     notifyListeners();
   }
 

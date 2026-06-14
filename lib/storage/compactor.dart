@@ -32,8 +32,15 @@ class Compactor {
           op: LogOp.add,
           id: r.id,
           ts: r.ts,
+          kind: r.kind,
           title: r.title,
           body: r.body,
+          items: r.items,
+          color: r.color,
+          pinned: r.pinned,
+          folder: r.folder,
+          createdAt: r.createdAt ?? r.ts,
+          deletedAt: r.deletedAt,
         ));
     await store.replaceAll(snapshot);
     index.replay(await store.readAll());
