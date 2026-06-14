@@ -78,6 +78,27 @@ class NoteRepository {
     return r.id;
   }
 
+  /// 复制一条笔记/待办为新条目（标题追加“副本”，不继承置顶），返回新 id。
+  Future<String> duplicate(String id) async {
+    final cur = _require(id);
+    final now = DateTime.now().toUtc();
+    final t = cur.title ?? '';
+    final r = LogRecord(
+      op: LogOp.add,
+      id: _newId(),
+      ts: now,
+      kind: cur.kind,
+      title: t.isEmpty ? '' : '$t 副本',
+      body: cur.body,
+      items: List.of(cur.items),
+      color: cur.color,
+      folder: cur.folder,
+      createdAt: now,
+    );
+    await _write(r);
+    return r.id;
+  }
+
   // ----- 编辑（保留未改动字段）-----
 
   /// 基于现有记录打补丁，写一条新的 UPD（ts=now）。
@@ -168,6 +189,20 @@ class NoteRepository {
     for (final n in index.trashed()) {
       await deleteForever(n.id);
     }
+  }
+
+  /// 启动时调用：彻底清理删除时间超过 [retention]（默认 30 天）的回收站条目。
+  /// 返回清理条数。[now] 仅供测试注入。
+  Future<int> purgeExpiredTrash({
+    Duration retention = const Duration(days: 30),
+    DateTime? now,
+  }) async {
+    final cutoff = (now ?? DateTime.now().toUtc()).subtract(retention);
+    final ids = index.expiredTrash(cutoff);
+    for (final id in ids) {
+      await deleteForever(id);
+    }
+    return ids.length;
   }
 
   static const Object _unset = Object();

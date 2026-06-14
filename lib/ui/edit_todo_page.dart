@@ -142,10 +142,24 @@ class _EditTodoPageState extends State<EditTodoPage> {
       nav.pop();
       return;
     }
-    await app.repo.moveToTrash(_noteId!);
+    final messenger = ScaffoldMessenger.of(context);
+    final id = _noteId!;
+    await app.repo.moveToTrash(id);
     await app.maybePushAfterEdit('trash todo');
     _noteId = null;
     nav.pop();
+    messenger
+      ..hideCurrentSnackBar()
+      ..showSnackBar(SnackBar(
+        content: const Text('已移到回收站'),
+        action: SnackBarAction(
+          label: '撤销',
+          onPressed: () async {
+            await app.repo.restore(id);
+            await app.maybePushAfterEdit('undo trash');
+          },
+        ),
+      ));
   }
 
   void _addLine() {

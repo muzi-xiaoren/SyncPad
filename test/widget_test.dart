@@ -89,6 +89,18 @@ void main() {
       expect(ix.trashCount, 1);
     });
 
+    test('expiredTrash 找出删除超期的条目', () {
+      final ix = MemoryIndex()
+        ..replay([
+          _note('old', 1, '旧', '', deletedTs: 1000), // 删除于 t=1000
+          _note('mid', 2, '中', '', deletedTs: 5000), // 删除于 t=5000
+          _note('live', 3, '活', ''), // 未删除，不计
+        ]);
+      expect(ix.expiredTrash(_t(4000)), ['old']); // 仅 old 早于 cutoff
+      expect(ix.expiredTrash(_t(900)), isEmpty); // 都未超期
+      expect(ix.expiredTrash(_t(6000)).toSet(), {'old', 'mid'});
+    });
+
     test('folders 去重、排序、排除未分类', () {
       final ix = MemoryIndex()
         ..replay([

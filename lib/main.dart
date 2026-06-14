@@ -15,6 +15,8 @@ Future<void> main() async {
   final settings = await AppSettings.load();
   final credentials = SecureCredentialStore();
   final repo = await NoteRepository.open();
+  // 清理删除满 30 天的回收站条目（Apple Notes 同款保留期）。
+  await repo.purgeExpiredTrash();
   final sync = SyncManager(
     settings: settings,
     credentials: credentials,

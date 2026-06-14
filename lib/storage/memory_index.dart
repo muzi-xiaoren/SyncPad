@@ -107,6 +107,12 @@ class MemoryIndex extends ChangeNotifier {
     return out;
   }
 
+  /// 回收站里删除时间早于 [cutoff] 的条目 id（用于 30 天自动清理）。
+  List<String> expiredTrash(DateTime cutoff) => trashed()
+      .where((n) => (n.deletedAt ?? n.updatedAt).isBefore(cutoff))
+      .map((n) => n.id)
+      .toList();
+
   /// 全部未删除条目里出现过的文件夹名（去重、排序）。
   List<String> folders() {
     final set = <String>{};

@@ -125,18 +125,48 @@ Future<void> showNoteActions(BuildContext context, Note note) async {
             },
           ),
           ListTile(
+            leading: const Icon(Icons.copy_outlined),
+            title: const Text('创建副本'),
+            onTap: () async {
+              Navigator.pop(ctx);
+              await app.repo.duplicate(note.id);
+              await app.maybePushAfterEdit('duplicate note');
+            },
+          ),
+          ListTile(
             leading: const Icon(Icons.delete_outline),
             title: const Text('删除'),
             onTap: () async {
               Navigator.pop(ctx);
-              await app.repo.moveToTrash(note.id);
-              await app.maybePushAfterEdit('trash note');
+              await trashWithUndo(context, note);
             },
           ),
         ],
       ),
     ),
   );
+}
+
+/// 把条目移到回收站，并弹出可一键撤销的提示（SnackBar）。
+///
+/// 所有“删除”入口（长按菜单、编辑页）都走这里，保证撤销体验一致。
+Future<void> trashWithUndo(BuildContext context, Note note) async {
+  final app = context.read<AppState>();
+  final messenger = ScaffoldMessenger.of(context);
+  await app.repo.moveToTrash(note.id);
+  await app.maybePushAfterEdit('trash note');
+  messenger
+    ..hideCurrentSnackBar()
+    ..showSnackBar(SnackBar(
+      content: const Text('已移到回收站'),
+      action: SnackBarAction(
+        label: '撤销',
+        onPressed: () async {
+          await app.repo.restore(note.id);
+          await app.maybePushAfterEdit('undo trash');
+        },
+      ),
+    ));
 }
 
 Future<void> chooseColor(BuildContext context, Note note) async {

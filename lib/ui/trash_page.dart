@@ -63,7 +63,11 @@ class TrashPage extends StatelessWidget {
                 ],
               ),
             )
-          : ListView.separated(
+          : Column(
+              children: [
+                const _RetentionHint(),
+                Expanded(
+                  child: ListView.separated(
               itemCount: items.length,
               separatorBuilder: (_, _) => const Divider(height: 1),
               itemBuilder: (context, i) {
@@ -100,6 +104,9 @@ class TrashPage extends StatelessWidget {
                   ),
                 );
               },
+                  ),
+                ),
+              ],
             ),
     );
   }
@@ -124,5 +131,29 @@ class TrashPage extends StatelessWidget {
     if (ok != true) return;
     await app.repo.deleteForever(n.id);
     await app.maybePushAfterEdit('delete forever');
+  }
+}
+
+/// 回收站顶部的自动清理说明条。
+class _RetentionHint extends StatelessWidget {
+  const _RetentionHint();
+
+  @override
+  Widget build(BuildContext context) {
+    final muted = Theme.of(context).colorScheme.onSurfaceVariant;
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.fromLTRB(16, 10, 16, 10),
+      child: Row(
+        children: [
+          Icon(Icons.info_outline, size: 16, color: muted),
+          const SizedBox(width: 8),
+          Expanded(
+            child: Text('回收站中的条目将在删除满 30 天后自动彻底清理',
+                style: TextStyle(fontSize: 12.5, color: muted)),
+          ),
+        ],
+      ),
+    );
   }
 }

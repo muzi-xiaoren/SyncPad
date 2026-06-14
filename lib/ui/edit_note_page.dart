@@ -113,10 +113,24 @@ class _EditNotePageState extends State<EditNotePage> {
       nav.pop();
       return;
     }
-    await app.repo.moveToTrash(_noteId!);
+    final messenger = ScaffoldMessenger.of(context);
+    final id = _noteId!;
+    await app.repo.moveToTrash(id);
     await app.maybePushAfterEdit('trash note');
     _noteId = null; // 阻止 PopScope 再次保存
     nav.pop();
+    messenger
+      ..hideCurrentSnackBar()
+      ..showSnackBar(SnackBar(
+        content: const Text('已移到回收站'),
+        action: SnackBarAction(
+          label: '撤销',
+          onPressed: () async {
+            await app.repo.restore(id);
+            await app.maybePushAfterEdit('undo trash');
+          },
+        ),
+      ));
   }
 
   @override
