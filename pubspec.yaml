@@ -1,0 +1,38 @@
+name: syncpad
+description: "Cross-platform local-first notes with free Git/WebDAV cloud sync."
+publish_to: 'none'
+version: 0.1.0+1
+
+environment:
+  sdk: ^3.11.5
+
+dependencies:
+  flutter:
+    sdk: flutter
+
+  cupertino_icons: ^1.0.8
+
+  # 存储 & 路径：各平台 app 数据目录
+  path: ^1.9.0
+  path_provider: ^2.1.3
+
+  # 安全凭据：PAT / 应用密码存 OS Keychain（Android Keystore / macOS Keychain / Win DPAPI）
+  flutter_secure_storage: ^9.2.2
+
+  # 本地设置持久化
+  shared_preferences: ^2.2.3
+
+  # HTTP（同步用：GitHub/Gitee REST API、WebDAV）
+  http: ^1.2.1
+
+  # 轻量状态管理
+  provider: ^6.1.2
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+
+  flutter_lints: ^6.0.0
+
+flutter:
+  uses-material-design: true
