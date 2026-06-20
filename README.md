@@ -11,6 +11,9 @@
 - **彩色卡片**：9 色配色板，宫格(masonry)瀑布流布局
 - **置顶**、**文件夹**分类、**全文搜索**（标题 / 正文 / 清单项）
 - **待办清单**：多项勾选、进度 x/y、单行待办
+- **Markdown**：编辑 / 预览切换，支持标题、列表、代码、图片
+- **图片附件**：插入本地图片（自动降采样到长边 ≤2560px），**内容寻址**存储，随笔记同步到各端
+- **导入 Markdown**：选本地 `.md` 文件导入，自动扫描并把其中引用的本地图片一并拉进附件仓
 - **创建副本**：长按卡片即可复制一份
 - **删除可撤销**：删除后底部「撤销」一键找回
 - **回收站**：软删除 → 可恢复 / 彻底删除 / 清空，删除满 30 天自动清理
@@ -26,6 +29,9 @@
   - Primary 是真相源，pull/push 都先走 primary；不可达时自动降级从 Mirror 拉取。
   - push 永远先写 Primary，再尽力推 Mirror（Mirror 冲突时自动 pull+merge+强制覆盖收敛）。
 - **冲突合并**：按 `record_id` 做行级 union，同一条取时间戳较大者（"后写胜出"），DEL 最终成立。
+- **图片附件**：文件名 = 内容 sha1（**内容寻址**），存于 notes 同目录的 `attachments/`。同名必同字节，
+  因此附件同步无需冲突合并 —— 推送后逐张补齐远端缺失的图，拉取后下载"被引用但本地没有"的图。
+  插入 / 导入时图片自动降采样到长边 ≤2560px、JPEG q88，以适配免费同步额度。
 
 > ⚠️ 合并是"**每篇笔记**"粒度，不是字符级。两端同时改同一篇笔记，较早那次会被覆盖
 > （不会损坏数据，但会丢一次改动）。真正的并发文本合并需要 CRDT —— 见路线图。
@@ -54,6 +60,7 @@
 
 > Token / 应用密码存于系统钥匙串（Android Keystore / macOS Keychain / Win DPAPI），不在上述目录里。
 > 笔记内容以**明文**存放在你的（私有）仓库里（按设计，不加密）。
+> 图片附件在同目录的 `attachments/` 子文件夹下（文件名 = 内容 sha1），同步时一并上传到远端 `attachments/`。
 
 ## 目录结构
 
@@ -68,6 +75,9 @@ SyncPad/
 │   │   ├── log_store.dart           # 磁盘日志读写（append / 原子 replace）
 │   │   ├── memory_index.dart        # 内存索引 + 全文检索（ChangeNotifier）
 │   │   ├── note_repository.dart     # CRUD API（UI 唯一入口）
+│   │   ├── attachment_store.dart    # 图片附件仓（内容寻址 + 降采样）
+│   │   ├── markdown_refs.dart       # 图片引用解析 / 改写（纯函数）
+│   │   ├── markdown_import.dart     # 导入本地 .md：收图入库 + 改写引用
 │   │   ├── compactor.dart           # 压实
 │   │   └── conflict_merger.dart     # 行级 union 合并
 │   ├── sync/
@@ -79,8 +89,9 @@ SyncPad/
 │   │   ├── app_settings.dart        # SharedPreferences
 │   │   └── secure_credential_store.dart  # Token / 应用密码走 OS Keychain
 │   └── ui/
-│       ├── home_page.dart           # 双 Tab：笔记宫格 + 待办列表 + 搜索
-│       ├── edit_note_page.dart      # 笔记编辑（颜色/置顶/文件夹/删除）
+│       ├── home_page.dart           # 双 Tab：笔记宫格 + 待办列表 + 搜索 + 导入
+│       ├── markdown_view.dart       # Markdown 渲染（自定义图片加载）
+│       ├── edit_note_page.dart      # 笔记编辑（Markdown 预览/插图/颜色/置顶/删除）
 │       ├── edit_todo_page.dart      # 待办清单编辑
 │       ├── trash_page.dart          # 最近删除（回收站）
 │       ├── note_actions.dart        # 长按菜单 / 调色板 / 文件夹选择
@@ -134,7 +145,8 @@ flutter build macos --release        # macOS    → build/macos/Build/Products/R
 
 - [ ] **CRDT 文本合并**（Yjs / Automerge）：真正的并发编辑无损合并（当前为每篇 last-write-wins）。
 - [ ] 提醒 / 待办到期通知。
-- [ ] Markdown 预览、图片附件。
+- [x] Markdown 预览、图片附件（内容寻址 + 跨端同步、导入本地 .md 自动收图）。
+- [ ] 真原图 / 大附件：走 Git Data API 或 LFS（当前降采样到 ≤2560px）。
 - [ ] 多语言 i18n（当前界面为简体中文）。
 - [ ] 桌面窗口位置记忆。
 - [x] 回收站删除满 30 天自动清理。

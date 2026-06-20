@@ -1,5 +1,6 @@
 import 'settings/app_settings.dart';
 import 'settings/secure_credential_store.dart';
+import 'storage/attachment_store.dart';
 import 'storage/compactor.dart';
 import 'storage/note_repository.dart';
 import 'sync/sync_manager.dart';
@@ -12,6 +13,7 @@ class AppState {
     required this.credentials,
     required this.sync,
     required this.compactor,
+    required this.attachments,
   });
 
   final NoteRepository repo;
@@ -19,6 +21,7 @@ class AppState {
   final SecureCredentialStore credentials;
   final SyncManager sync;
   final Compactor compactor;
+  final AttachmentStore attachments;
 
   /// 编辑/删除后按设置自动推送（关云同步或关开关时静默跳过）。失败不抛。
   Future<void> maybePushAfterEdit(String commitMessage) async {

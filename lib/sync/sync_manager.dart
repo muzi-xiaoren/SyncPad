@@ -7,6 +7,7 @@ import 'package:flutter/foundation.dart';
 import '../models/note.dart';
 import '../settings/app_settings.dart';
 import '../settings/secure_credential_store.dart';
+import '../storage/attachment_store.dart';
 import '../storage/conflict_merger.dart';
 import '../storage/log_store.dart';
 import '../storage/memory_index.dart';
@@ -68,12 +69,14 @@ class SyncManager extends ChangeNotifier {
     required this.credentials,
     required this.logStore,
     required this.memoryIndex,
+    required this.attachments,
   });
 
   final AppSettings settings;
   final SecureCredentialStore credentials;
   final LogStore logStore;
   final MemoryIndex memoryIndex;
+  final AttachmentStore attachments;
 
   SyncStatus _status = const SyncStatus();
   SyncStatus get status => _status;
@@ -201,6 +204,11 @@ class SyncManager extends ChangeNotifier {
       memoryIndex.replay(merged);
     }
 
+    // 补齐被引用但本地缺失的附件（图片）。
+    try {
+      await _pullAttachmentsFrom(used);
+    } catch (_) {}
+
     _knownRemoteVersion = snap.version;
     remoteHasUpdates = false;
     _setStatus(_status.copyWith(
@@ -270,6 +278,9 @@ class SyncManager extends ChangeNotifier {
     }
 
     final mirrors = await _pushMirrors(localBytes, commitMessage);
+
+    // 把本地图片附件补齐到主仓库与副仓库（尽力，不阻塞）。
+    await _pushAttachmentsEverywhere(primary);
 
     _knownRemoteVersion = await primary.headVersion();
     _setStatus(_status.copyWith(
@@ -355,6 +366,62 @@ class SyncManager extends ChangeNotifier {
     return s.length > 200 ? '${s.substring(0, 200)}…' : s;
   }
 
+  // ---- 附件（图片）同步：内容寻址，只“补齐缺失”，逐个尽力、不阻塞主流程 ----
+
+  /// 把本地被引用、远端缺失的附件推到 [b]。返回成功推送数。
+  Future<int> _pushAttachmentsTo(SyncBackend b) async {
+    final referenced = memoryIndex.allAttachmentNames();
+    if (referenced.isEmpty) return 0;
+    Set<String> remote;
+    try {
+      remote = await b.listAttachments();
+    } catch (_) {
+      remote = {};
+    }
+    var n = 0;
+    for (final name in referenced) {
+      if (remote.contains(name)) continue;
+      final bytes = await attachments.bytesForName(name);
+      if (bytes == null) continue; // 本地也没有（可能别端的图还没拉到）
+      try {
+        await b.putAttachment(name, bytes);
+        n++;
+      } catch (_) {/* 单张失败不影响其它 */}
+    }
+    return n;
+  }
+
+  /// 从 [b] 拉取本地缺失但被引用的附件。返回成功拉取数。
+  Future<int> _pullAttachmentsFrom(SyncBackend b) async {
+    final referenced = memoryIndex.allAttachmentNames();
+    if (referenced.isEmpty) return 0;
+    final localHave = await attachments.localNames();
+    var n = 0;
+    for (final name in referenced) {
+      if (localHave.contains(name)) continue;
+      try {
+        final bytes = await b.getAttachment(name);
+        if (bytes != null) {
+          await attachments.writeNamed(name, bytes);
+          n++;
+        }
+      } catch (_) {/* 单张失败不影响其它 */}
+    }
+    return n;
+  }
+
+  /// 把附件推到主仓库 + 所有副仓库（尽力，吞掉异常）。
+  Future<void> _pushAttachmentsEverywhere(SyncBackend primary) async {
+    try {
+      await _pushAttachmentsTo(primary);
+    } catch (_) {}
+    for (final m in await _mirrors()) {
+      try {
+        await _pushAttachmentsTo(m);
+      } catch (_) {}
+    }
+  }
+
   /// 用云端覆盖本地：拉取远端快照并**完全替换**本地日志（不合并）。
   /// 远端不存在 / 为空时不执行（避免误清空本地）。
   Future<bool> overwriteLocalWithRemote() async {
@@ -397,6 +464,11 @@ class SyncManager extends ChangeNotifier {
     final remoteLog = _parseLog(snap.content);
     await logStore.replaceAll(remoteLog);
     memoryIndex.replay(remoteLog);
+
+    // 补齐被引用但本地缺失的附件。
+    try {
+      await _pullAttachmentsFrom(used);
+    } catch (_) {}
 
     _knownRemoteVersion = snap.version;
     remoteHasUpdates = false;
@@ -469,6 +541,7 @@ class SyncManager extends ChangeNotifier {
     }
 
     final mirrors = await _pushMirrors(localBytes, commitMessage, merge: false);
+    await _pushAttachmentsEverywhere(primary);
 
     _knownRemoteVersion = await primary.headVersion();
     _setStatus(_status.copyWith(

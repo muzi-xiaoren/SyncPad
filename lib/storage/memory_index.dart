@@ -2,6 +2,7 @@ import 'package:flutter/foundation.dart';
 
 import '../models/note.dart';
 import '../settings/app_settings.dart';
+import 'markdown_refs.dart';
 
 /// 内存里的"活记录"索引：record_id → 最新一条 [LogRecord]（含软删除项）。
 /// 启动时由 [replay] 一次性扫日志构建；之后所有 CRUD 都直接动它。
@@ -127,6 +128,17 @@ class MemoryIndex extends ChangeNotifier {
       byKind(kind, folder: folder).length;
 
   int get trashCount => _allNotes.where((n) => n.isDeleted).length;
+
+  /// 所有活记录（含回收站）正文里引用到的附件文件名（去重）。
+  /// 同步时据此把缺失附件补齐到 / 从远端。
+  Set<String> allAttachmentNames() {
+    final out = <String>{};
+    for (final r in _records.values) {
+      final b = r.body;
+      if (b != null && b.isNotEmpty) out.addAll(attachmentNamesIn(b));
+    }
+    return out;
+  }
 
   static int _cmp(Note a, Note b, NoteSort sort) {
     if (a.pinned != b.pinned) return a.pinned ? -1 : 1;

@@ -26,6 +26,18 @@ abstract class SyncBackend {
 
   /// 后端类型名（github / gitee / webdav），用于状态展示。
   String get name;
+
+  // ---- 图片附件同步（操作与 notes 文件同目录下的 attachments/ 子目录）----
+  // 附件内容寻址（文件名=sha1），同名必同字节，因此无需冲突合并：只“补齐缺失”。
+
+  /// 列出远端 attachments/ 下已存在的文件名；目录不存在返回空集。
+  Future<Set<String>> listAttachments();
+
+  /// 下载单个附件字节；不存在返回 null。
+  Future<Uint8List?> getAttachment(String name);
+
+  /// 上传单个附件（仅在远端缺失时调用）。
+  Future<void> putAttachment(String name, Uint8List bytes);
 }
 
 class RemoteSnapshot {

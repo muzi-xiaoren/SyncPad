@@ -40,10 +40,19 @@ class GitBackend implements SyncBackend {
         BackendKind.webdav => throw StateError('WebDAV does not use GitBackend'),
       };
 
-  Uri _contentsUri({String? ref}) {
-    final base =
-        '$_host/repos/${config.owner}/${config.repo}/contents/${config.filePath}';
+  Uri _contentsUri({String? ref}) => _pathUri(config.filePath, ref: ref);
+
+  Uri _pathUri(String path, {String? ref}) {
+    final base = '$_host/repos/${config.owner}/${config.repo}/contents/$path';
     return ref == null ? Uri.parse(base) : Uri.parse('$base?ref=$ref');
+  }
+
+  /// notes 文件同目录下的 attachments 目录（相对仓库根）。
+  String get _attDir {
+    final fp = config.filePath;
+    final slash = fp.lastIndexOf('/');
+    final dir = slash < 0 ? '' : fp.substring(0, slash + 1);
+    return '${dir}attachments';
   }
 
   Map<String, String> get _headers => {
@@ -151,5 +160,80 @@ class GitBackend implements SyncBackend {
       throw SyncException(resp.body, statusCode: resp.statusCode);
     }
     return PushOutcome.ok;
+  }
+
+  @override
+  Future<Set<String>> listAttachments() async {
+    final resp = await _http
+        .get(_pathUri(_attDir, ref: config.branch), headers: _headers)
+        .timeout(_timeout);
+    if (resp.statusCode == 404) return {};
+    if (resp.statusCode >= 400) {
+      throw SyncException(resp.body, statusCode: resp.statusCode);
+    }
+    final decoded = jsonDecode(resp.body);
+    if (decoded is! List) return {}; // 目录为空 / 不是目录
+    return {
+      for (final e in decoded)
+        if (e is Map && e['type'] == 'file' && e['name'] is String)
+          e['name'] as String,
+    };
+  }
+
+  @override
+  Future<Uint8List?> getAttachment(String name) async {
+    // GitHub：raw media type 直接拿字节（绕过 contents API 的 1MB base64 上限）。
+    // Gitee：仍按 contents JSON(base64) 解析。
+    if (kind == BackendKind.gitee) {
+      final resp = await _http
+          .get(_pathUri('$_attDir/$name', ref: config.branch), headers: _headers)
+          .timeout(_timeout);
+      if (resp.statusCode == 404) return null;
+      if (resp.statusCode >= 400) {
+        throw SyncException(resp.body, statusCode: resp.statusCode);
+      }
+      final decoded = jsonDecode(resp.body);
+      if (decoded is! Map<String, dynamic> || decoded['content'] is! String) {
+        return null;
+      }
+      return base64.decode((decoded['content'] as String).replaceAll('\n', ''));
+    }
+    final resp = await _http.get(
+      _pathUri('$_attDir/$name', ref: config.branch),
+      headers: {..._headers, 'Accept': 'application/vnd.github.raw'},
+    ).timeout(_timeout);
+    if (resp.statusCode == 404) return null;
+    if (resp.statusCode >= 400) {
+      throw SyncException(resp.body, statusCode: resp.statusCode);
+    }
+    return resp.bodyBytes;
+  }
+
+  @override
+  Future<void> putAttachment(String name, Uint8List bytes) async {
+    final body = <String, Object?>{
+      'message': 'add attachment $name',
+      'content': base64.encode(bytes),
+      'branch': config.branch,
+    };
+    final headers = {..._headers, 'Content-Type': 'application/json'};
+    final payload = jsonEncode(body);
+    final uri = _pathUri('$_attDir/$name');
+    final isGitee = kind == BackendKind.gitee;
+    final resp = await (isGitee
+            ? _http.post(uri, headers: headers, body: payload)
+            : _http.put(uri, headers: headers, body: payload))
+        .timeout(_timeout);
+    // 内容寻址：同名即同内容，已存在视为成功（并发/重复推送的兜底）。
+    final lower = resp.body.toLowerCase();
+    if (resp.statusCode == 422 ||
+        resp.statusCode == 409 ||
+        (resp.statusCode == 400 &&
+            (lower.contains('exist') || resp.body.contains('已经存在')))) {
+      return;
+    }
+    if (resp.statusCode >= 400) {
+      throw SyncException(resp.body, statusCode: resp.statusCode);
+    }
   }
 }

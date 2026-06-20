@@ -260,7 +260,7 @@ class _AboutSection extends StatelessWidget {
             ],
           ),
           const SizedBox(height: 8),
-          const Text('版本 0.3.0'),
+          const Text('版本 0.4.0'),
           const SizedBox(height: 4),
           const Text('本地优先 · 免费 Git/WebDAV 云同步的开源记事本'),
           const SizedBox(height: 8),

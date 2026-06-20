@@ -4,6 +4,7 @@ import 'package:provider/provider.dart';
 import 'app_state.dart';
 import 'settings/app_settings.dart';
 import 'settings/secure_credential_store.dart';
+import 'storage/attachment_store.dart';
 import 'storage/compactor.dart';
 import 'storage/note_repository.dart';
 import 'sync/sync_manager.dart';
@@ -17,11 +18,13 @@ Future<void> main() async {
   final repo = await NoteRepository.open();
   // 清理删除满 30 天的回收站条目（Apple Notes 同款保留期）。
   await repo.purgeExpiredTrash();
+  final attachments = await AttachmentStore.open();
   final sync = SyncManager(
     settings: settings,
     credentials: credentials,
     logStore: repo.store,
     memoryIndex: repo.index,
+    attachments: attachments,
   );
   final compactor = Compactor(repo.store, repo.index);
 
@@ -31,6 +34,7 @@ Future<void> main() async {
     credentials: credentials,
     sync: sync,
     compactor: compactor,
+    attachments: attachments,
   );
 
   // 启动时按设置自动拉取合并（失败静默，仅记录状态）。

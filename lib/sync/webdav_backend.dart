@@ -188,4 +188,92 @@ class WebDavBackend implements SyncBackend {
       }
     }
   }
+
+  // ---- 附件 ----
+
+  /// notes 文件同目录下的 attachments/ 子目录段（如 ['SyncPad','attachments']）。
+  List<String> get _attDirSegments {
+    final fp = config.filePath.startsWith('/')
+        ? config.filePath.substring(1)
+        : config.filePath;
+    final slash = fp.lastIndexOf('/');
+    final dir = slash < 0 ? '' : fp.substring(0, slash + 1);
+    return '${dir}attachments'.split('/').where((s) => s.isNotEmpty).toList();
+  }
+
+  Uri _attUri(String name) {
+    final base = config.repo.endsWith('/') ? config.repo : '${config.repo}/';
+    return Uri.parse(base).resolve('${_attDirSegments.join('/')}/$name');
+  }
+
+  @override
+  Future<Set<String>> listAttachments() async {
+    final dirUri = _attUri(''); // 末尾带 / 的集合地址
+    final req = http.Request('PROPFIND', dirUri)
+      ..headers.addAll({..._headers, 'Depth': '1', 'Content-Type': 'application/xml'})
+      ..body =
+          '<?xml version="1.0"?><d:propfind xmlns:d="DAV:"><d:prop><d:resourcetype/></d:prop></d:propfind>';
+    final streamed = await _http.send(req).timeout(_timeout);
+    final resp = await http.Response.fromStream(streamed);
+    if (resp.statusCode == 404 || resp.statusCode == 409) return {};
+    if (resp.statusCode >= 400) {
+      throw SyncException(resp.body, statusCode: resp.statusCode);
+    }
+    final out = <String>{};
+    final hrefRe = RegExp(r'<[a-zA-Z]*:?href>([^<]+)</[a-zA-Z]*:?href>');
+    for (final m in hrefRe.allMatches(resp.body)) {
+      var href = m.group(1)!.trim();
+      if (href.endsWith('/')) continue; // 集合本身或子目录
+      try {
+        href = Uri.decodeFull(href);
+      } catch (_) {}
+      final name = href.split('/').last;
+      if (name.isNotEmpty) out.add(name);
+    }
+    return out;
+  }
+
+  @override
+  Future<Uint8List?> getAttachment(String name) async {
+    final resp =
+        await _http.get(_attUri(name), headers: _headers).timeout(_timeout);
+    if (resp.statusCode == 404 || resp.statusCode == 409) return null;
+    if (resp.statusCode >= 400) {
+      throw SyncException(resp.body, statusCode: resp.statusCode);
+    }
+    return resp.bodyBytes;
+  }
+
+  @override
+  Future<void> putAttachment(String name, Uint8List bytes) async {
+    await _ensureAttachmentsDir();
+    final resp = await _http
+        .put(_attUri(name),
+            headers: {..._headers, 'Content-Type': 'application/octet-stream'},
+            body: bytes)
+        .timeout(_timeout);
+    if (resp.statusCode >= 400) {
+      throw SyncException(resp.body, statusCode: resp.statusCode);
+    }
+  }
+
+  Future<void> _ensureAttachmentsDir() async {
+    final base = config.repo.endsWith('/') ? config.repo : '${config.repo}/';
+    var current = Uri.parse(base);
+    for (final seg in _attDirSegments) {
+      current = current.resolve('$seg/');
+      final req = http.Request('MKCOL', current)..headers.addAll(_headers);
+      final streamed = await _http.send(req).timeout(_timeout);
+      final resp = await http.Response.fromStream(streamed);
+      if (resp.statusCode == 201 ||
+          resp.statusCode == 405 ||
+          resp.statusCode == 301 ||
+          resp.statusCode == 302) {
+        continue;
+      }
+      if (resp.statusCode >= 400) {
+        throw SyncException(resp.body, statusCode: resp.statusCode);
+      }
+    }
+  }
 }

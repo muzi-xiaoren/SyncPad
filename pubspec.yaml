@@ -1,7 +1,7 @@
 name: syncpad
 description: "Cross-platform local-first notes with free Git/WebDAV cloud sync."
 publish_to: 'none'
-version: 0.3.0+3
+version: 0.4.0+4
 
 environment:
   sdk: ^3.11.5
@@ -30,6 +30,18 @@ dependencies:
 
   # 笔记宫格（masonry）布局
   flutter_staggered_grid_view: ^0.7.0
+
+  # Markdown 渲染（官方 flutter_markdown 已停维护，这是其社区接管版）
+  flutter_markdown_plus: ^1.0.7
+
+  # 跨平台选图（Android/iOS/macOS/Windows/Linux 都支持）
+  file_picker: ^11.0.2
+
+  # 图片降采样/重编码（纯 Dart，无原生依赖）
+  image: ^4.0.0
+
+  # 附件内容寻址用的 sha1（纯 Dart）
+  crypto: ^3.0.0
 
 dev_dependencies:
   flutter_test:

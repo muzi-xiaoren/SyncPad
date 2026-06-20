@@ -1,7 +1,9 @@
+import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
 import '../app_state.dart';
+import 'markdown_view.dart';
 import 'note_actions.dart';
 import 'note_palette.dart';
 
@@ -24,6 +26,7 @@ class _EditNotePageState extends State<EditNotePage> {
   int _color = 0;
   bool _pinned = false;
   String _folder = '';
+  bool _preview = false;
 
   @override
   void initState() {
@@ -133,9 +136,43 @@ class _EditNotePageState extends State<EditNotePage> {
       ));
   }
 
+  /// 选一张本地图片，降采样后存进附件仓，在光标处插入 Markdown 引用。
+  Future<void> _insertImage() async {
+    final messenger = ScaffoldMessenger.of(context);
+    final app = context.read<AppState>();
+    final picked =
+        await FilePicker.pickFiles(type: FileType.image, withData: true);
+    if (picked == null || picked.files.isEmpty) return;
+    final file = picked.files.first;
+    final bytes = file.bytes;
+    if (bytes == null) return;
+    final ref = await app.attachments.add(bytes, sourceExt: file.extension);
+
+    final text = _body.text;
+    final sel = _body.selection;
+    final at = (sel.isValid && sel.start >= 0 && sel.start <= text.length)
+        ? sel.start
+        : text.length;
+    final end = (sel.isValid && sel.end >= at && sel.end <= text.length)
+        ? sel.end
+        : at;
+    final pre = (at > 0 && text[at - 1] != '\n') ? '\n' : '';
+    final insert = '$pre![]($ref)\n';
+    final newText = text.replaceRange(at, end, insert);
+    _body.value = TextEditingValue(
+      text: newText,
+      selection: TextSelection.collapsed(offset: at + insert.length),
+    );
+    if (!mounted) return;
+    await _save(); // 图片已入仓，把引用落库（并触发同步）
+    if (!mounted) return;
+    messenger.showSnackBar(const SnackBar(content: Text('已插入图片')));
+  }
+
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
+    final app = context.read<AppState>();
     final bg = NotePalette.background(_color, theme.brightness);
     return PopScope(
       canPop: false,
@@ -150,6 +187,18 @@ class _EditNotePageState extends State<EditNotePage> {
         appBar: AppBar(
           backgroundColor: bg,
           actions: [
+            IconButton(
+              tooltip: _preview ? '编辑' : '预览',
+              icon: Icon(
+                  _preview ? Icons.edit_outlined : Icons.visibility_outlined),
+              onPressed: () => setState(() => _preview = !_preview),
+            ),
+            if (!_preview)
+              IconButton(
+                tooltip: '插入图片',
+                icon: const Icon(Icons.image_outlined),
+                onPressed: _insertImage,
+              ),
             IconButton(
               tooltip: _pinned ? '取消置顶' : '置顶',
               icon: Icon(_pinned ? Icons.push_pin : Icons.push_pin_outlined),
@@ -186,38 +235,52 @@ class _EditNotePageState extends State<EditNotePage> {
             ),
           ],
         ),
-        body: Padding(
-          padding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.stretch,
-            children: [
-              TextField(
-                controller: _title,
-                textInputAction: TextInputAction.next,
-                style: theme.textTheme.titleLarge
-                    ?.copyWith(fontWeight: FontWeight.bold),
-                decoration: const InputDecoration(
-                  hintText: '标题',
-                  border: InputBorder.none,
+        body: _preview
+            ? ListView(
+                padding: const EdgeInsets.fromLTRB(16, 8, 16, 24),
+                children: [
+                  if (_title.text.trim().isNotEmpty)
+                    Padding(
+                      padding: const EdgeInsets.only(bottom: 10),
+                      child: Text(_title.text,
+                          style: theme.textTheme.headlineSmall
+                              ?.copyWith(fontWeight: FontWeight.bold)),
+                    ),
+                  MarkdownView(data: _body.text, attachments: app.attachments),
+                ],
+              )
+            : Padding(
+                padding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
+                    TextField(
+                      controller: _title,
+                      textInputAction: TextInputAction.next,
+                      style: theme.textTheme.titleLarge
+                          ?.copyWith(fontWeight: FontWeight.bold),
+                      decoration: const InputDecoration(
+                        hintText: '标题',
+                        border: InputBorder.none,
+                      ),
+                    ),
+                    const Divider(height: 8),
+                    Expanded(
+                      child: TextField(
+                        controller: _body,
+                        expands: true,
+                        maxLines: null,
+                        textAlignVertical: TextAlignVertical.top,
+                        keyboardType: TextInputType.multiline,
+                        decoration: const InputDecoration(
+                          hintText: '在这里写点什么…（支持 Markdown）',
+                          border: InputBorder.none,
+                        ),
+                      ),
+                    ),
+                  ],
                 ),
               ),
-              const Divider(height: 8),
-              Expanded(
-                child: TextField(
-                  controller: _body,
-                  expands: true,
-                  maxLines: null,
-                  textAlignVertical: TextAlignVertical.top,
-                  keyboardType: TextInputType.multiline,
-                  decoration: const InputDecoration(
-                    hintText: '在这里写点什么…',
-                    border: InputBorder.none,
-                  ),
-                ),
-              ),
-            ],
-          ),
-        ),
       ),
     );
   }
