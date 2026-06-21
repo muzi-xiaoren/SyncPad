@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
 import 'app_state.dart';
+import 'desktop/window_state.dart';
 import 'settings/app_settings.dart';
 import 'settings/secure_credential_store.dart';
 import 'storage/attachment_store.dart';
@@ -14,6 +15,12 @@ Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
 
   final settings = await AppSettings.load();
+
+  // 桌面端：恢复上次窗口位置/大小（移动端跳过）。
+  if (isDesktop) {
+    await WindowStateManager(settings).initAndRestore();
+  }
+
   final credentials = SecureCredentialStore();
   final repo = await NoteRepository.open();
   // 清理删除满 30 天的回收站条目（Apple Notes 同款保留期）。

@@ -113,6 +113,7 @@ class AppSettings extends ChangeNotifier {
   static const _kTextSize = 'note_text_size';
   static const _kLivePreview = 'md_live_preview';
   static const _kAutoCompactBeforeSync = 'auto_compact_before_sync';
+  static const _kWindowFrame = 'window_frame';
 
   final SharedPreferences _prefs;
 
@@ -150,6 +151,15 @@ class AppSettings extends ChangeNotifier {
   /// 推送前若日志放大率过高自动整理一次。默认开。
   bool get autoCompactBeforeSync =>
       _prefs.getBool(_kAutoCompactBeforeSync) ?? true;
+
+  /// 桌面窗口几何 [left, top, width, height]；无记录返回 null。
+  List<double>? get windowFrame {
+    final raw = _prefs.getString(_kWindowFrame);
+    if (raw == null) return null;
+    final parts = raw.split(',').map(double.tryParse).toList();
+    if (parts.length != 4 || parts.any((e) => e == null)) return null;
+    return parts.cast<double>();
+  }
 
   BackendConfig get github => _loadBackend(_kBackendGithub, BackendKind.github);
   BackendConfig get gitee => _loadBackend(_kBackendGitee, BackendKind.gitee);
@@ -236,6 +246,12 @@ class AppSettings extends ChangeNotifier {
   Future<void> setAutoCompactBeforeSync(bool v) async {
     await _prefs.setBool(_kAutoCompactBeforeSync, v);
     notifyListeners();
+  }
+
+  /// 保存窗口几何。不 notifyListeners：窗口位置/大小变化不影响 UI。
+  Future<void> setWindowFrame(
+      double left, double top, double width, double height) async {
+    await _prefs.setString(_kWindowFrame, '$left,$top,$width,$height');
   }
 
   Future<void> updateBackend(BackendConfig config) async {

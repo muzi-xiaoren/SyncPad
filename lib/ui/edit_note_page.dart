@@ -191,16 +191,15 @@ class _EditNotePageState extends State<EditNotePage> {
     final live = context.watch<AppSettings>().livePreview;
     final bg = NotePalette.background(_color, theme.brightness);
 
-    // 快捷键：⌘/Ctrl+E 在任意位置切换预览（不与文本输入冲突）；
-    // 全屏预览中（无输入框聚焦）再额外支持裸 v 和 Esc 退回编辑。
+    // 快捷键：⌘/Ctrl+P 在任意位置切换预览（带修饰键，不与文本输入冲突）；
+    // 全屏预览中（无输入框聚焦）再额外支持 Esc 退回编辑。
     final bindings = <ShortcutActivator, VoidCallback>{
-      const SingleActivator(LogicalKeyboardKey.keyE, control: true):
+      const SingleActivator(LogicalKeyboardKey.keyP, control: true):
           _togglePreview,
-      const SingleActivator(LogicalKeyboardKey.keyE, meta: true):
+      const SingleActivator(LogicalKeyboardKey.keyP, meta: true):
           _togglePreview,
     };
     if (_preview && !live) {
-      bindings[const SingleActivator(LogicalKeyboardKey.keyV)] = _togglePreview;
       bindings[const SingleActivator(LogicalKeyboardKey.escape)] =
           _togglePreview;
     }
@@ -235,7 +234,7 @@ class _EditNotePageState extends State<EditNotePage> {
               // 实时预览开启时一直并排显示，无需切换按钮。
               if (!live)
                 IconButton(
-                  tooltip: _preview ? '编辑 (⌘/Ctrl+E)' : '预览 (⌘/Ctrl+E)',
+                  tooltip: _preview ? '编辑 (⌘/Ctrl+P)' : '预览 (⌘/Ctrl+P)',
                   icon: Icon(_preview
                       ? Icons.edit_outlined
                       : Icons.visibility_outlined),

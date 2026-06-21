@@ -46,11 +46,33 @@ dependencies:
   # 打开外链（关于页的仓库链接 / 检查更新跳转 Release 页）
   url_launcher: ^6.3.2
 
+  # 桌面端窗口大小/位置记忆（移动端不触碰）
+  window_manager: ^0.5.1
+
 dev_dependencies:
   flutter_test:
     sdk: flutter
 
   flutter_lints: ^6.0.0
 
+  # 从一张源图生成五端 App 图标
+  flutter_launcher_icons: ^0.14.4
+
 flutter:
   uses-material-design: true
+
+# App 图标：dart run flutter_launcher_icons 由 assets/icon/app_icon.png 生成各端图标。
+flutter_launcher_icons:
+  image_path: "assets/icon/app_icon.png"
+  android: true
+  min_sdk_android: 21
+  ios: true
+  remove_alpha_ios: true
+  macos:
+    generate: true
+    image_path: "assets/icon/app_icon.png"
+  windows:
+    generate: true
+    image_path: "assets/icon/app_icon.png"
+  web:
+    generate: false
