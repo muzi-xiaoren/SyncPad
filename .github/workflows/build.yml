@@ -1,0 +1,252 @@
+name: Build All Platforms
+
+# 推到 main / 手动触发时，并行构建 Android / Windows / macOS / Linux / iOS，
+# 产物上传为可下载 artifact（在本次 Actions 运行页面底部下载）。
+on:
+  push:
+    branches: [ main, master ]
+    tags: [ 'v*' ]          # 推 v 开头的 tag（如 v0.0.1）→ 构建后自动发 Release
+  workflow_dispatch:
+
+permissions:
+  contents: write           # 允许 GITHUB_TOKEN 创建 Release / 上传附件
+
+jobs:
+  android:
+    name: Android APKs
+    runs-on: ubuntu-latest
+    env:
+      # 固定签名密钥（base64）。未配置该 Secret 时下面的签名步骤会被跳过，
+      # 构建回退到 debug 签名（指纹随机）。配置后所有版本同一指纹，更新无需卸载。
+      ANDROID_KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: '17'
+      - uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          cache: true
+      - run: flutter pub get
+      - name: Configure release signing (when keystore secret is set)
+        if: env.ANDROID_KEYSTORE_BASE64 != ''
+        env:
+          ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+          ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+        run: |
+          echo "$ANDROID_KEYSTORE_BASE64" | base64 --decode > android/app/upload-keystore.jks
+          {
+            echo "storeFile=upload-keystore.jks"
+            echo "keyAlias=$ANDROID_KEY_ALIAS"
+            echo "storePassword=$ANDROID_KEYSTORE_PASSWORD"
+            echo "keyPassword=$ANDROID_KEY_PASSWORD"
+          } > android/key.properties
+      - run: flutter build apk --release --split-per-abi
+      - name: Rename Android APKs
+        run: |
+          mkdir -p dist/android
+          cp build/app/outputs/flutter-apk/app-arm64-v8a-release.apk dist/android/SyncPad-Android-arm64.apk
+          cp build/app/outputs/flutter-apk/app-armeabi-v7a-release.apk dist/android/SyncPad-Android-armeabi-v7a.apk
+          cp build/app/outputs/flutter-apk/app-x86_64-release.apk dist/android/SyncPad-Android-x64.apk
+      - uses: actions/upload-artifact@v7
+        with:
+          name: SyncPad-Android-APKs
+          path: dist/android/*.apk
+          if-no-files-found: error
+
+  windows:
+    name: Windows
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          cache: true
+      - run: flutter pub get
+      - run: flutter build windows --release
+      - name: Zip Windows build
+        run: Compress-Archive -Path build/windows/x64/runner/Release/* -DestinationPath SyncPad-Windows.zip
+      - name: Install Inno Setup
+        run: choco install innosetup -y --no-progress
+      - name: Build Windows installer
+        shell: pwsh
+        run: |
+          $version = (Select-String -Path pubspec.yaml -Pattern '^version:\s*(.+)$').Matches.Groups[1].Value.Split('+')[0]
+          $script = @"
+          [Setup]
+          AppId={{C7A1E9F4-5B2D-4A6E-9C81-3F0D2B7E6A45}
+          AppName=SyncPad
+          AppVersion=$version
+          DefaultDirName={autopf}\SyncPad
+          DefaultGroupName=SyncPad
+          OutputDir=$env:GITHUB_WORKSPACE
+          OutputBaseFilename=SyncPad-Setup
+          Compression=lzma
+          SolidCompression=yes
+          WizardStyle=modern
+
+          [Files]
+          Source: "$env:GITHUB_WORKSPACE\build\windows\x64\runner\Release\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
+
+          [Icons]
+          Name: "{group}\SyncPad"; Filename: "{app}\SyncPad.exe"
+          Name: "{autodesktop}\SyncPad"; Filename: "{app}\SyncPad.exe"; Tasks: desktopicon
+
+          [Tasks]
+          Name: "desktopicon"; Description: "Create a desktop shortcut"; GroupDescription: "Additional icons:"; Flags: unchecked
+
+          [Run]
+          Filename: "{app}\SyncPad.exe"; Description: "Launch SyncPad"; Flags: nowait postinstall skipifsilent
+          "@
+          Set-Content -Path installer.iss -Value $script -Encoding UTF8
+          & "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe" installer.iss
+      - uses: actions/upload-artifact@v7
+        with:
+          name: SyncPad-Windows
+          path: |
+            SyncPad-Windows.zip
+            SyncPad-Setup.exe
+          if-no-files-found: error
+
+  macos:
+    name: macOS
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          cache: true
+      - run: flutter pub get
+      # Flutter 3.44 起 flutter build macos 只产 universal(arm64+x86_64)，已无 --target-platform。
+      # 这里先 universal 构建，再用 lipo 拆成单架构、用 Release.entitlements 重签（adhoc），分别打包。
+      - run: flutter build macos --release
+      - name: Split into per-arch .app bundles & zip
+        run: |
+          set -euo pipefail
+          SRC="build/macos/Build/Products/Release/SyncPad.app"
+          ENT="macos/Runner/Release.entitlements"
+          for ARCH in arm64 x86_64; do
+            case "$ARCH" in arm64) OUT=arm64 ;; x86_64) OUT=x64 ;; esac
+            WORK="$RUNNER_TEMP/$ARCH"
+            rm -rf "$WORK"; mkdir -p "$WORK"
+            cp -R "$SRC" "$WORK/"
+            APP="$WORK/SyncPad.app"
+            # 把每个 universal Mach-O 瘦身成单架构（保留原权限位）
+            find "$APP" -type f | while read -r f; do
+              if file "$f" | grep -q "Mach-O universal"; then
+                mode=$(stat -f "%Lp" "$f")
+                lipo "$f" -thin "$ARCH" -output "$f.thin"
+                mv -f "$f.thin" "$f"
+                chmod "$mode" "$f"
+              fi
+            done
+            # lipo 改动二进制会让签名失效 → adhoc 深度重签（主程序套用 entitlements）
+            codesign --force --deep --sign - --entitlements "$ENT" "$APP"
+            codesign --verify --deep --strict "$APP"
+            ditto -c -k --sequesterRsrc --keepParent "$APP" "$GITHUB_WORKSPACE/SyncPad-macOS-$OUT.zip"
+          done
+          ls -lh "$GITHUB_WORKSPACE"/SyncPad-macOS-*.zip
+      - uses: actions/upload-artifact@v7
+        with:
+          name: SyncPad-macOS
+          path: SyncPad-macOS-*.zip
+          if-no-files-found: error
+
+  linux:
+    name: Linux x64
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - name: Install Linux build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y clang cmake ninja-build pkg-config libgtk-3-dev liblzma-dev libsecret-1-dev zip
+      - uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          cache: true
+      - run: flutter pub get
+      - run: flutter build linux --release
+      - name: Zip Linux build
+        run: |
+          cd build/linux/x64/release/bundle
+          zip -r "$GITHUB_WORKSPACE/SyncPad-Linux-x64.zip" .
+      - uses: actions/upload-artifact@v7
+        with:
+          name: SyncPad-Linux-x64
+          path: SyncPad-Linux-x64.zip
+          if-no-files-found: error
+
+  ios:
+    name: iOS (unsigned)
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          cache: true
+      - run: flutter pub get
+      # 未签名构建：能产出 .app，但需 Apple 开发者证书才能装真机
+      - run: flutter build ios --release --no-codesign
+      - name: Package unsigned .app
+        run: |
+          cd build/ios/iphoneos
+          ditto -c -k --sequesterRsrc --keepParent Runner.app "$GITHUB_WORKSPACE/SyncPad-iOS-unsigned.zip"
+      - uses: actions/upload-artifact@v7
+        with:
+          name: SyncPad-iOS-unsigned
+          path: SyncPad-iOS-unsigned.zip
+          if-no-files-found: error
+
+  release:
+    name: Publish Release
+    needs: [ android, windows, macos, linux, ios ]
+    # 仅当推送的是 v 开头的 tag 时才发布 Release（普通 push 到 main 只产 artifact）
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download all build artifacts
+        uses: actions/download-artifact@v8
+        with:
+          path: artifacts
+      - name: Collect & rename release files
+        run: |
+          mkdir -p release
+          cp artifacts/SyncPad-Android-APKs/*.apk                     release/
+          cp artifacts/SyncPad-Windows/SyncPad-Windows.zip            release/
+          cp artifacts/SyncPad-Windows/SyncPad-Setup.exe              release/
+          cp artifacts/SyncPad-macOS/SyncPad-macOS-arm64.zip          release/
+          cp artifacts/SyncPad-macOS/SyncPad-macOS-x64.zip            release/
+          cp artifacts/SyncPad-Linux-x64/SyncPad-Linux-x64.zip        release/
+          cp artifacts/SyncPad-iOS-unsigned/SyncPad-iOS-unsigned.zip  release/
+          ls -lh release
+      - name: Publish to GitHub Releases
+        uses: softprops/action-gh-release@v2
+        with:
+          files: release/*
+          generate_release_notes: true   # 自动根据提交生成 changelog（追加在下方下载指引之后）
+          body: |
+            ## 📦 下载哪个版本？/ Which file should I download?
+
+            | 你的设备 / Your device | 下载文件 / File |
+            |---|---|
+            | **Windows**（推荐：安装版） | `SyncPad-Setup.exe` |
+            | Windows（免安装绿色版，解压即用） | `SyncPad-Windows.zip` |
+            | **Mac** · Apple 芯片（M1/M2/M3/M4…） | `SyncPad-macOS-arm64.zip` |
+            | **Mac** · Intel 芯片 | `SyncPad-macOS-x64.zip` |
+            | **Android** 手机/平板（2017 年后机型，绝大多数） | `SyncPad-Android-arm64.apk` |
+            | Android 32 位老旧机型 | `SyncPad-Android-armeabi-v7a.apk` |
+            | Android 模拟器 / x86 设备 | `SyncPad-Android-x64.apk` |
+            | **Linux** x64 桌面 | `SyncPad-Linux-x64.zip` |
+            | iOS（未签名，需自备 Apple 开发者证书签名后侧载） | `SyncPad-iOS-unsigned.zip` |
+
+            > **不确定 Mac 是哪种芯片？** 点左上角苹果菜单 →「关于本机」，看「芯片 / 处理器」：显示 **Apple M…** 选 arm64，显示 **Intel** 选 x64。
+            > **Mac 提示「已损坏 / 无法验证开发者」**（App 为 adhoc 签名）：拖进「应用程序」后，终端执行 `xattr -dr com.apple.quarantine /Applications/SyncPad.app`，再打开即可。
+            > **Windows 弹 SmartScreen**：点「更多信息」→「仍要运行」。
+            > **Android 提示未知来源**：在系统设置中允许安装后重试。

@@ -2,7 +2,7 @@
     <!-- 云同步需要联网（默认模板只在 debug manifest 里有，release 必须显式声明）。 -->
     <uses-permission android:name="android.permission.INTERNET"/>
     <application
-        android:label="syncpad"
+        android:label="SyncPad"
         android:name="${applicationName}"
         android:icon="@mipmap/ic_launcher">
         <activity
