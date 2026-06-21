@@ -17,7 +17,7 @@ class MarkdownView extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return MarkdownBody(
-      data: data,
+      data: expandToc(data),
       selectable: true,
       imageBuilder: (uri, title, alt) => _Img(
         uri: uri,

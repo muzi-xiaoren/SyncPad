@@ -8,6 +8,7 @@ import '../models/note.dart';
 import '../settings/app_settings.dart';
 import '../settings/secure_credential_store.dart';
 import '../storage/attachment_store.dart';
+import '../storage/compactor.dart';
 import '../storage/conflict_merger.dart';
 import '../storage/log_store.dart';
 import '../storage/memory_index.dart';
@@ -70,6 +71,7 @@ class SyncManager extends ChangeNotifier {
     required this.logStore,
     required this.memoryIndex,
     required this.attachments,
+    this.compactor,
   });
 
   final AppSettings settings;
@@ -77,6 +79,9 @@ class SyncManager extends ChangeNotifier {
   final LogStore logStore;
   final MemoryIndex memoryIndex;
   final AttachmentStore attachments;
+
+  /// 推送前自动整理日志用（可空：未注入时不自动整理）。
+  final Compactor? compactor;
 
   SyncStatus _status = const SyncStatus();
   SyncStatus get status => _status;
@@ -221,8 +226,26 @@ class SyncManager extends ChangeNotifier {
   }
 
   /// 推送当前本地日志：primary 必成功，mirror 尽力。返回 true 表示 primary 写入成功。
-  Future<bool> pushAll({String commitMessage = 'update notes'}) async {
+  Future<bool> pushAll({
+    String commitMessage = 'update notes',
+    bool autoCompact = true,
+  }) async {
     if (!settings.cloudEnabled) return false;
+
+    // 同步前自动整理：日志放大率过高时先压实一次，避免越推越大。
+    // 仅初次进入时尝试（冲突重试不再重复整理）；冲突由下面的 baseVersion 机制兜底，
+    // 即便此时远端更新，重试会先 pull-merge 再推，不会丢数据。
+    if (autoCompact &&
+        settings.autoCompactBeforeSync &&
+        compactor != null &&
+        compactor!.shouldCompact()) {
+      try {
+        await compactor!.compact();
+      } catch (_) {
+        // 整理失败不影响推送，继续用当前日志。
+      }
+    }
+
     _setStatus(_status.copyWith(state: SyncState.working, message: '正在推送…'));
 
     final primary = await _primary();
@@ -268,7 +291,7 @@ class SyncManager extends ChangeNotifier {
       // 远端比本地新：先拉合并，再重试一次
       final changed = await pullAndMerge();
       if (changed) {
-        return pushAll(commitMessage: commitMessage);
+        return pushAll(commitMessage: commitMessage, autoCompact: false);
       }
       _setStatus(_status.copyWith(
         state: SyncState.error,

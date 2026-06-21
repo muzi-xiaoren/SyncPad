@@ -1,8 +1,10 @@
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
 
 import '../app_state.dart';
+import '../settings/app_settings.dart';
 import 'markdown_view.dart';
 import 'note_actions.dart';
 import 'note_palette.dart';
@@ -22,6 +24,8 @@ class EditNotePage extends StatefulWidget {
 class _EditNotePageState extends State<EditNotePage> {
   final _title = TextEditingController();
   final _body = TextEditingController();
+  final _bodyFocus = FocusNode();
+  final _previewFocus = FocusNode(); // 全屏预览时接收 v / Esc 快捷键
   String? _noteId;
   int _color = 0;
   bool _pinned = false;
@@ -50,7 +54,18 @@ class _EditNotePageState extends State<EditNotePage> {
   void dispose() {
     _title.dispose();
     _body.dispose();
+    _bodyFocus.dispose();
+    _previewFocus.dispose();
     super.dispose();
+  }
+
+  /// 切换编辑 ⇄ 预览，并把焦点移到对应区域（让 v / Esc / ⌘E 持续可用）。
+  void _togglePreview() {
+    setState(() => _preview = !_preview);
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+      (_preview ? _previewFocus : _bodyFocus).requestFocus();
+    });
   }
 
   bool get _isEmpty => _title.text.trim().isEmpty && _body.text.trim().isEmpty;
@@ -173,115 +188,191 @@ class _EditNotePageState extends State<EditNotePage> {
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
     final app = context.read<AppState>();
+    final live = context.watch<AppSettings>().livePreview;
     final bg = NotePalette.background(_color, theme.brightness);
-    return PopScope(
-      canPop: false,
-      onPopInvokedWithResult: (didPop, _) async {
-        if (didPop) return;
-        final nav = Navigator.of(context);
-        await _save();
-        nav.pop();
-      },
-      child: Scaffold(
-        backgroundColor: bg,
-        appBar: AppBar(
+
+    // 快捷键：⌘/Ctrl+E 在任意位置切换预览（不与文本输入冲突）；
+    // 全屏预览中（无输入框聚焦）再额外支持裸 v 和 Esc 退回编辑。
+    final bindings = <ShortcutActivator, VoidCallback>{
+      const SingleActivator(LogicalKeyboardKey.keyE, control: true):
+          _togglePreview,
+      const SingleActivator(LogicalKeyboardKey.keyE, meta: true):
+          _togglePreview,
+    };
+    if (_preview && !live) {
+      bindings[const SingleActivator(LogicalKeyboardKey.keyV)] = _togglePreview;
+      bindings[const SingleActivator(LogicalKeyboardKey.escape)] =
+          _togglePreview;
+    }
+
+    final Widget body;
+    if (live) {
+      body = _splitBody(theme, app);
+    } else if (_preview) {
+      body = Focus(
+        focusNode: _previewFocus,
+        child: _previewPane(theme, app, live: false),
+      );
+    } else {
+      body = _editorBody(theme);
+    }
+
+    return CallbackShortcuts(
+      bindings: bindings,
+      child: PopScope(
+        canPop: false,
+        onPopInvokedWithResult: (didPop, _) async {
+          if (didPop) return;
+          final nav = Navigator.of(context);
+          await _save();
+          nav.pop();
+        },
+        child: Scaffold(
           backgroundColor: bg,
-          actions: [
-            IconButton(
-              tooltip: _preview ? '编辑' : '预览',
-              icon: Icon(
-                  _preview ? Icons.edit_outlined : Icons.visibility_outlined),
-              onPressed: () => setState(() => _preview = !_preview),
-            ),
-            if (!_preview)
+          appBar: AppBar(
+            backgroundColor: bg,
+            actions: [
+              // 实时预览开启时一直并排显示，无需切换按钮。
+              if (!live)
+                IconButton(
+                  tooltip: _preview ? '编辑 (⌘/Ctrl+E)' : '预览 (⌘/Ctrl+E)',
+                  icon: Icon(_preview
+                      ? Icons.edit_outlined
+                      : Icons.visibility_outlined),
+                  onPressed: _togglePreview,
+                ),
+              if (live || !_preview)
+                IconButton(
+                  tooltip: '插入图片',
+                  icon: const Icon(Icons.image_outlined),
+                  onPressed: _insertImage,
+                ),
               IconButton(
-                tooltip: '插入图片',
-                icon: const Icon(Icons.image_outlined),
-                onPressed: _insertImage,
+                tooltip: _pinned ? '取消置顶' : '置顶',
+                icon: Icon(_pinned ? Icons.push_pin : Icons.push_pin_outlined),
+                onPressed: _togglePin,
               ),
-            IconButton(
-              tooltip: _pinned ? '取消置顶' : '置顶',
-              icon: Icon(_pinned ? Icons.push_pin : Icons.push_pin_outlined),
-              onPressed: _togglePin,
-            ),
-            IconButton(
-              tooltip: '颜色',
-              icon: const Icon(Icons.palette_outlined),
-              onPressed: _pickColor,
-            ),
-            PopupMenuButton<String>(
-              onSelected: (v) {
-                if (v == 'folder') _pickFolder();
-                if (v == 'delete') _delete();
-              },
-              itemBuilder: (ctx) => [
-                PopupMenuItem(
-                  value: 'folder',
-                  child: ListTile(
-                    contentPadding: EdgeInsets.zero,
-                    leading: const Icon(Icons.folder_outlined),
-                    title: Text(_folder.isEmpty ? '移动到文件夹' : '文件夹：$_folder'),
-                  ),
-                ),
-                const PopupMenuItem(
-                  value: 'delete',
-                  child: ListTile(
-                    contentPadding: EdgeInsets.zero,
-                    leading: Icon(Icons.delete_outline),
-                    title: Text('删除'),
-                  ),
-                ),
-              ],
-            ),
-          ],
-        ),
-        body: _preview
-            ? ListView(
-                padding: const EdgeInsets.fromLTRB(16, 8, 16, 24),
-                children: [
-                  if (_title.text.trim().isNotEmpty)
-                    Padding(
-                      padding: const EdgeInsets.only(bottom: 10),
-                      child: Text(_title.text,
-                          style: theme.textTheme.headlineSmall
-                              ?.copyWith(fontWeight: FontWeight.bold)),
+              IconButton(
+                tooltip: '颜色',
+                icon: const Icon(Icons.palette_outlined),
+                onPressed: _pickColor,
+              ),
+              PopupMenuButton<String>(
+                onSelected: (v) {
+                  if (v == 'folder') _pickFolder();
+                  if (v == 'delete') _delete();
+                },
+                itemBuilder: (ctx) => [
+                  PopupMenuItem(
+                    value: 'folder',
+                    child: ListTile(
+                      contentPadding: EdgeInsets.zero,
+                      leading: const Icon(Icons.folder_outlined),
+                      title: Text(_folder.isEmpty ? '移动到文件夹' : '文件夹：$_folder'),
                     ),
-                  MarkdownView(data: _body.text, attachments: app.attachments),
+                  ),
+                  const PopupMenuItem(
+                    value: 'delete',
+                    child: ListTile(
+                      contentPadding: EdgeInsets.zero,
+                      leading: Icon(Icons.delete_outline),
+                      title: Text('删除'),
+                    ),
+                  ),
                 ],
-              )
-            : Padding(
-                padding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.stretch,
-                  children: [
-                    TextField(
-                      controller: _title,
-                      textInputAction: TextInputAction.next,
-                      style: theme.textTheme.titleLarge
-                          ?.copyWith(fontWeight: FontWeight.bold),
-                      decoration: const InputDecoration(
-                        hintText: '标题',
-                        border: InputBorder.none,
-                      ),
-                    ),
-                    const Divider(height: 8),
-                    Expanded(
-                      child: TextField(
-                        controller: _body,
-                        expands: true,
-                        maxLines: null,
-                        textAlignVertical: TextAlignVertical.top,
-                        keyboardType: TextInputType.multiline,
-                        decoration: const InputDecoration(
-                          hintText: '在这里写点什么…（支持 Markdown）',
-                          border: InputBorder.none,
-                        ),
-                      ),
-                    ),
-                  ],
-                ),
               ),
+            ],
+          ),
+          body: body,
+        ),
       ),
+    );
+  }
+
+  /// 全屏编辑：标题 + 正文输入框。
+  Widget _editorBody(ThemeData theme) => Padding(
+        padding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
+        child: _editorColumn(theme),
+      );
+
+  Widget _editorColumn(ThemeData theme) => Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          TextField(
+            controller: _title,
+            textInputAction: TextInputAction.next,
+            style: theme.textTheme.titleLarge
+                ?.copyWith(fontWeight: FontWeight.bold),
+            decoration: const InputDecoration(
+              hintText: '标题',
+              border: InputBorder.none,
+            ),
+          ),
+          const Divider(height: 8),
+          Expanded(
+            child: TextField(
+              controller: _body,
+              focusNode: _bodyFocus,
+              expands: true,
+              maxLines: null,
+              textAlignVertical: TextAlignVertical.top,
+              keyboardType: TextInputType.multiline,
+              decoration: const InputDecoration(
+                hintText: '在这里写点什么…（支持 Markdown）',
+                border: InputBorder.none,
+              ),
+            ),
+          ),
+        ],
+      );
+
+  /// 预览面板。[live]=true 时随输入实时重建。
+  Widget _previewPane(ThemeData theme, AppState app, {required bool live}) {
+    Widget content() => ListView(
+          padding: const EdgeInsets.fromLTRB(16, 8, 16, 24),
+          children: [
+            if (_title.text.trim().isNotEmpty)
+              Padding(
+                padding: const EdgeInsets.only(bottom: 10),
+                child: Text(_title.text,
+                    style: theme.textTheme.headlineSmall
+                        ?.copyWith(fontWeight: FontWeight.bold)),
+              ),
+            MarkdownView(data: _body.text, attachments: app.attachments),
+          ],
+        );
+    if (!live) return content();
+    return AnimatedBuilder(
+      animation: Listenable.merge([_title, _body]),
+      builder: (_, _) => content(),
+    );
+  }
+
+  /// 实时预览：宽屏左右分栏，窄屏上下分栏。
+  Widget _splitBody(ThemeData theme, AppState app) {
+    final wide = MediaQuery.of(context).size.width >= 720;
+    final editor = Padding(
+      padding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
+      child: _editorColumn(theme),
+    );
+    final preview = _previewPane(theme, app, live: true);
+    if (wide) {
+      return Row(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          Expanded(child: editor),
+          const VerticalDivider(width: 1),
+          Expanded(child: preview),
+        ],
+      );
+    }
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        Expanded(child: editor),
+        const Divider(height: 1),
+        Expanded(child: preview),
+      ],
     );
   }
 }

@@ -1,13 +1,18 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
+import 'package:url_launcher/url_launcher.dart';
 
 import '../app_state.dart';
+import '../services/update_checker.dart';
 import '../settings/app_settings.dart';
 import '../storage/memory_index.dart';
 import '../sync/git_backend.dart';
 import '../sync/sync_backend.dart';
 import '../sync/webdav_backend.dart';
 import 'trash_page.dart';
+
+/// 应用版本号（关于页展示 + 检查更新比较的基准）。发版时同步改 pubspec.yaml。
+const String kAppVersion = '0.0.1';
 
 class SettingsPage extends StatelessWidget {
   const SettingsPage({super.key});
@@ -43,6 +48,12 @@ class SettingsPage extends StatelessWidget {
               subtitle: const Text('新增/修改/删除后自动推送到远端'),
               value: settings.pushAfterEdit,
               onChanged: settings.setPushAfterEdit,
+            ),
+            SwitchListTile(
+              title: const Text('同步前自动整理日志'),
+              subtitle: const Text('推送前若日志冗余过多自动压实一次，省流量'),
+              value: settings.autoCompactBeforeSync,
+              onChanged: settings.setAutoCompactBeforeSync,
             ),
             const Divider(),
             const _SectionHeader('手动覆盖（谨慎）'),
@@ -112,6 +123,13 @@ class SettingsPage extends StatelessWidget {
               ],
             ),
           ),
+          SwitchListTile(
+            secondary: const Icon(Icons.vertical_split_outlined),
+            title: const Text('实时预览 Markdown'),
+            subtitle: const Text('编辑时并排显示渲染效果（宽屏左右、窄屏上下分栏）'),
+            value: settings.livePreview,
+            onChanged: settings.setLivePreview,
+          ),
 
           const Divider(),
           // ============ 数据 ============
@@ -136,6 +154,7 @@ class SettingsPage extends StatelessWidget {
 
           const Divider(),
           const _SectionHeader('关于'),
+          const _CheckUpdateTile(),
           const _AboutSection(),
         ],
       ),
@@ -240,8 +259,85 @@ class _CompactionSubtitle extends StatelessWidget {
   }
 }
 
+class _CheckUpdateTile extends StatefulWidget {
+  const _CheckUpdateTile();
+
+  @override
+  State<_CheckUpdateTile> createState() => _CheckUpdateTileState();
+}
+
+class _CheckUpdateTileState extends State<_CheckUpdateTile> {
+  bool _checking = false;
+
+  Future<void> _check() async {
+    final messenger = ScaffoldMessenger.of(context);
+    setState(() => _checking = true);
+    try {
+      final info = await UpdateChecker.check(kAppVersion);
+      if (!mounted) return;
+      if (info.hasUpdate) {
+        final go = await showDialog<bool>(
+          context: context,
+          builder: (ctx) => AlertDialog(
+            title: const Text('发现新版本'),
+            content:
+                Text('最新版本 ${info.latestVersion}（当前 $kAppVersion）。前往下载页？'),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.of(ctx).pop(false),
+                child: const Text('取消'),
+              ),
+              FilledButton.icon(
+                onPressed: () => Navigator.of(ctx).pop(true),
+                icon: const Icon(Icons.open_in_new, size: 18),
+                label: const Text('前往'),
+              ),
+            ],
+          ),
+        );
+        if (go == true) {
+          await launchUrl(Uri.parse(info.htmlUrl),
+              mode: LaunchMode.externalApplication);
+        }
+      } else {
+        messenger.showSnackBar(
+          SnackBar(content: Text('已是最新版本（$kAppVersion）')),
+        );
+      }
+    } catch (_) {
+      messenger
+          .showSnackBar(const SnackBar(content: Text('检查更新失败，请检查网络后再试')));
+    } finally {
+      if (mounted) setState(() => _checking = false);
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return ListTile(
+      leading: const Icon(Icons.system_update_alt),
+      title: const Text('检查更新'),
+      subtitle: _checking ? const Text('正在检查…') : null,
+      trailing: _checking
+          ? const SizedBox(
+              width: 18,
+              height: 18,
+              child: CircularProgressIndicator(strokeWidth: 2),
+            )
+          : null,
+      onTap: _checking ? null : _check,
+    );
+  }
+}
+
+// ============ 关于（两列布局 + 可点击跳转 GitHub） ============
+
 class _AboutSection extends StatelessWidget {
   const _AboutSection();
+
+  static const String _author = 'muzi-xiaoren';
+  static const String _repoUrl = 'https://github.com/muzi-xiaoren/SyncPad';
+  static const String _repoLabel = 'github.com/muzi-xiaoren/SyncPad';
 
   @override
   Widget build(BuildContext context) {
@@ -259,11 +355,46 @@ class _AboutSection extends StatelessWidget {
               Text('SyncPad', style: theme.textTheme.titleMedium),
             ],
           ),
-          const SizedBox(height: 8),
-          const Text('版本 0.0.1'),
           const SizedBox(height: 4),
-          const Text('本地优先 · 免费 Git/WebDAV 云同步的开源记事本'),
+          Text(
+            '本地优先 · 免费 Git/WebDAV 云同步的开源记事本',
+            style: theme.textTheme.bodySmall
+                ?.copyWith(color: theme.colorScheme.outline),
+          ),
+          const SizedBox(height: 12),
+          const _AboutRow(label: '版本', child: Text(kAppVersion)),
           const SizedBox(height: 8),
+          const _AboutRow(label: '作者', child: Text(_author)),
+          const SizedBox(height: 8),
+          _AboutRow(
+            label: '仓库',
+            child: InkWell(
+              onTap: () => _openRepo(context),
+              borderRadius: BorderRadius.circular(4),
+              child: Padding(
+                padding: const EdgeInsets.symmetric(vertical: 2),
+                child: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Flexible(
+                      child: Text(
+                        _repoLabel,
+                        style: TextStyle(
+                          color: theme.colorScheme.primary,
+                          decoration: TextDecoration.underline,
+                          decorationColor: theme.colorScheme.primary,
+                        ),
+                      ),
+                    ),
+                    const SizedBox(width: 4),
+                    Icon(Icons.open_in_new,
+                        size: 16, color: theme.colorScheme.primary),
+                  ],
+                ),
+              ),
+            ),
+          ),
+          const SizedBox(height: 12),
           SelectableText(
             '数据文件：${app.repo.store.path}',
             style: theme.textTheme.bodySmall
@@ -271,6 +402,54 @@ class _AboutSection extends StatelessWidget {
           ),
         ],
       ),
+    );
+  }
+
+  Future<void> _openRepo(BuildContext context) async {
+    final messenger = ScaffoldMessenger.of(context);
+    var launched = false;
+    try {
+      launched = await launchUrl(Uri.parse(_repoUrl),
+          mode: LaunchMode.externalApplication);
+    } catch (_) {
+      launched = false;
+    }
+    // 打开失败时回退：把地址提示出来，便于用户手动复制访问。
+    if (!launched) {
+      messenger.showSnackBar(const SnackBar(content: Text(_repoUrl)));
+    }
+  }
+}
+
+/// 关于页的一行：左列定宽标签 + 右列内容。
+class _AboutRow extends StatelessWidget {
+  const _AboutRow({required this.label, required this.child});
+
+  final String label;
+  final Widget child;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    return Row(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        SizedBox(
+          width: 64,
+          child: Text(
+            label,
+            style: theme.textTheme.bodyMedium
+                ?.copyWith(color: theme.colorScheme.outline),
+          ),
+        ),
+        const SizedBox(width: 12),
+        Expanded(
+          child: DefaultTextStyle.merge(
+            style: theme.textTheme.bodyMedium ?? const TextStyle(),
+            child: child,
+          ),
+        ),
+      ],
     );
   }
 }
@@ -336,7 +515,7 @@ class _BackendFormState extends State<_BackendForm> {
   late final TextEditingController _branch;
   late final TextEditingController _filePath;
   late final TextEditingController _pat;
-  bool _patChanged = false;
+  bool _hasSavedPat = false; // 已存有令牌；字段留空表示沿用旧值，不再塞占位符进框
   bool _testing = false;
   String? _testMessage;
   bool _testFailed = false;
@@ -360,7 +539,7 @@ class _BackendFormState extends State<_BackendForm> {
     final app = context.read<AppState>();
     final existing = await app.credentials.readPat(widget.initial.kind);
     if (existing != null && existing.isNotEmpty && mounted) {
-      _pat.text = '••••••••';
+      setState(() => _hasSavedPat = true);
     }
   }
 
@@ -393,8 +572,9 @@ class _BackendFormState extends State<_BackendForm> {
     try {
       await app.settings.updateBackend(_currentConfig());
       final pat = _pat.text.trim();
-      if (_patChanged && pat.isNotEmpty && pat != '••••••••') {
+      if (pat.isNotEmpty) {
         await app.credentials.writePat(widget.initial.kind, pat);
+        if (mounted) setState(() => _hasSavedPat = true);
       }
       messenger.showSnackBar(const SnackBar(content: Text('已保存')));
     } catch (e) {
@@ -409,7 +589,7 @@ class _BackendFormState extends State<_BackendForm> {
     });
     final app = context.read<AppState>();
     var pat = _pat.text.trim();
-    if (pat == '••••••••' || pat.isEmpty) {
+    if (pat.isEmpty) {
       pat = (await app.credentials.readPat(widget.initial.kind) ?? '').trim();
     }
     final cfg = _currentConfig().copyWith(enabled: true);
@@ -520,13 +700,9 @@ class _BackendFormState extends State<_BackendForm> {
         TextField(
           controller: _pat,
           obscureText: true,
-          onChanged: (_) => _patChanged = true,
-          onTap: () {
-            if (_pat.text == '••••••••') _pat.clear();
-            _patChanged = true;
-          },
           decoration: InputDecoration(
             labelText: _isWebDav ? '应用密码' : 'Access Token',
+            hintText: _hasSavedPat ? '已保存（留空则不修改）' : null,
             helperText: _isWebDav
                 ? '坚果云：账户设置 → 安全选项 → 第三方应用管理 生成'
                 : 'GitHub/Gitee 的私有令牌（需仓库读写权限）',

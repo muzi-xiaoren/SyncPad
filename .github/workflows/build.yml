@@ -227,7 +227,7 @@ jobs:
           cp artifacts/SyncPad-iOS-unsigned/SyncPad-iOS-unsigned.zip  release/
           ls -lh release
       - name: Publish to GitHub Releases
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@v3
         with:
           files: release/*
           generate_release_notes: true   # 自动根据提交生成 changelog（追加在下方下载指引之后）

@@ -59,3 +59,47 @@ String rewriteImageUrls(String text, Map<String, String> replace) {
 /// 用于列表卡片预览：把图片引用替换成占位符 [图片]，避免卡片里露出一长串路径。
 String stripImagesForPreview(String text) =>
     text.replaceAll(_imgRe, '[图片]');
+
+// 独占一行的 `[TOC]` / `[toc]` 标记（忽略大小写、首尾空白，允许 \r 行尾）。
+final _tocRe =
+    RegExp(r'^[ \t]*\[toc\][ \t]*\r?$', multiLine: true, caseSensitive: false);
+// ATX 标题：1~6 个 # + 空格 + 文本（去掉行尾可能的收尾 #）。
+final _headingRe = RegExp(r'^(#{1,6})[ \t]+(.+?)[ \t]*#*[ \t]*$');
+// 围栏代码块起止：``` 或 ~~~。
+final _fenceRe = RegExp(r'^[ \t]*(`{3,}|~{3,})');
+
+/// 把 Markdown 里独占一行的 `[TOC]` 标记展开成基于标题的目录（缩进无序列表）。
+///
+/// 很多编辑器（Typora 等）支持 `[TOC]` 自动目录，但标准 Markdown 渲染器不认识，
+/// 会原样显示出 “[TOC]” 这几个字。这里在渲染前把它替换成文档各级标题组成的
+/// 嵌套列表；代码块内的 `#` 不计为标题。没有标题时直接抹掉该标记。
+String expandToc(String markdown) {
+  if (!_tocRe.hasMatch(markdown)) return markdown;
+
+  final headings = <({int level, String text})>[];
+  var inFence = false;
+  for (final raw in markdown.split('\n')) {
+    final line = raw.endsWith('\r') ? raw.substring(0, raw.length - 1) : raw;
+    if (_fenceRe.hasMatch(line)) {
+      inFence = !inFence;
+      continue;
+    }
+    if (inFence) continue;
+    final m = _headingRe.firstMatch(line);
+    if (m != null) {
+      headings.add((level: m.group(1)!.length, text: m.group(2)!.trim()));
+    }
+  }
+
+  if (headings.isEmpty) return markdown.replaceAll(_tocRe, '');
+
+  final minLevel =
+      headings.map((h) => h.level).reduce((a, b) => a < b ? a : b);
+  final sb = StringBuffer();
+  for (final h in headings) {
+    final indent = '    ' * (h.level - minLevel); // 每级 4 空格 → 嵌套列表生效
+    sb.writeln('$indent- ${h.text}');
+  }
+  // 前后各留一空行，避免目录列表和相邻段落黏在一起。
+  return markdown.replaceAll(_tocRe, '\n${sb.toString().trimRight()}\n');
+}

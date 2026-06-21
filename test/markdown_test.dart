@@ -33,6 +33,34 @@ void main() {
     });
   });
 
+  group('expandToc', () {
+    test('把 [TOC] 展开成各级标题的缩进列表', () {
+      const md = '[TOC]\n\n# 一级\n## 二级\n### 三级\n# 又一级';
+      final out = expandToc(md);
+      expect(out.contains('[TOC]'), isFalse);
+      expect(out.contains('- 一级'), isTrue);
+      expect(out.contains('    - 二级'), isTrue); // 比最浅级缩进 4 空格
+      expect(out.contains('        - 三级'), isTrue);
+    });
+
+    test('大小写不敏感、忽略代码块里的 #', () {
+      const md = '[toc]\n\n```\n# 不是标题\n```\n\n## 真标题';
+      final out = expandToc(md);
+      expect(out.contains('- 真标题'), isTrue);
+      // 代码块原文仍在，但不应作为目录项（不出现 "- 不是标题" 这样的列表条目）。
+      expect(out.contains('- 不是标题'), isFalse);
+    });
+
+    test('没有标题时移除 [TOC] 标记', () {
+      expect(expandToc('[TOC]\n\n正文').contains('[TOC]'), isFalse);
+    });
+
+    test('没有 [TOC] 时原样返回', () {
+      const md = '# 标题\n正文';
+      expect(expandToc(md), md);
+    });
+  });
+
   group('image prepare', () {
     test('normalizeImageExt / sniffImageExt', () {
       expect(normalizeImageExt('.JPEG'), 'jpg');

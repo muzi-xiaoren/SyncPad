@@ -19,14 +19,15 @@ Future<void> main() async {
   // 清理删除满 30 天的回收站条目（Apple Notes 同款保留期）。
   await repo.purgeExpiredTrash();
   final attachments = await AttachmentStore.open();
+  final compactor = Compactor(repo.store, repo.index);
   final sync = SyncManager(
     settings: settings,
     credentials: credentials,
     logStore: repo.store,
     memoryIndex: repo.index,
     attachments: attachments,
+    compactor: compactor,
   );
-  final compactor = Compactor(repo.store, repo.index);
 
   final appState = AppState(
     repo: repo,

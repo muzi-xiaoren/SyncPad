@@ -43,6 +43,9 @@ dependencies:
   # 附件内容寻址用的 sha1（纯 Dart）
   crypto: ^3.0.0
 
+  # 打开外链（关于页的仓库链接 / 检查更新跳转 Release 页）
+  url_launcher: ^6.3.2
+
 dev_dependencies:
   flutter_test:
     sdk: flutter

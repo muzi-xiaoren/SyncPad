@@ -111,6 +111,8 @@ class AppSettings extends ChangeNotifier {
   static const _kSort = 'note_sort';
   static const _kLayout = 'note_layout';
   static const _kTextSize = 'note_text_size';
+  static const _kLivePreview = 'md_live_preview';
+  static const _kAutoCompactBeforeSync = 'auto_compact_before_sync';
 
   final SharedPreferences _prefs;
 
@@ -141,6 +143,13 @@ class AppSettings extends ChangeNotifier {
         (e) => e.name == _prefs.getString(_kTextSize),
         orElse: () => TextSizePref.normal,
       );
+
+  /// 编辑笔记时实时并排预览 Markdown（宽屏左右分栏、窄屏上下分栏）。默认关。
+  bool get livePreview => _prefs.getBool(_kLivePreview) ?? false;
+
+  /// 推送前若日志放大率过高自动整理一次。默认开。
+  bool get autoCompactBeforeSync =>
+      _prefs.getBool(_kAutoCompactBeforeSync) ?? true;
 
   BackendConfig get github => _loadBackend(_kBackendGithub, BackendKind.github);
   BackendConfig get gitee => _loadBackend(_kBackendGitee, BackendKind.gitee);
@@ -216,6 +225,16 @@ class AppSettings extends ChangeNotifier {
 
   Future<void> setTextSize(TextSizePref v) async {
     await _prefs.setString(_kTextSize, v.name);
+    notifyListeners();
+  }
+
+  Future<void> setLivePreview(bool v) async {
+    await _prefs.setBool(_kLivePreview, v);
+    notifyListeners();
+  }
+
+  Future<void> setAutoCompactBeforeSync(bool v) async {
+    await _prefs.setBool(_kAutoCompactBeforeSync, v);
     notifyListeners();
   }
 
