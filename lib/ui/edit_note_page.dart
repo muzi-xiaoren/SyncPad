@@ -5,6 +5,7 @@ import 'package:provider/provider.dart';
 
 import '../app_state.dart';
 import '../settings/app_settings.dart';
+import 'block_editor.dart';
 import 'markdown_view.dart';
 import 'note_actions.dart';
 import 'note_palette.dart';
@@ -25,7 +26,8 @@ class _EditNotePageState extends State<EditNotePage> {
   final _title = TextEditingController();
   final _body = TextEditingController();
   final _bodyFocus = FocusNode();
-  final _previewFocus = FocusNode(); // 全屏预览时接收 v / Esc 快捷键
+  final _previewFocus = FocusNode(); // 全屏预览时接收 Esc 快捷键
+  final _blockKey = GlobalKey<BlockEditorState>(); // 块级编辑器（实时预览模式）
   String? _noteId;
   int _color = 0;
   bool _pinned = false;
@@ -59,13 +61,21 @@ class _EditNotePageState extends State<EditNotePage> {
     super.dispose();
   }
 
-  /// 切换编辑 ⇄ 预览，并把焦点移到对应区域（让 v / Esc / ⌘E 持续可用）。
+  /// 切换编辑/预览（普通模式）或 所见即所得/整篇源码（实时预览模式）。
   void _togglePreview() {
+    // 从块级编辑切到源码前，先提交正在编辑的块，保证源码是最新的。
+    _blockKey.currentState?.commitPending();
     setState(() => _preview = !_preview);
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (!mounted) return;
       (_preview ? _previewFocus : _bodyFocus).requestFocus();
     });
+  }
+
+  /// 块级编辑器写回 _body 后：保存并触发同步。
+  void _onBlockCommit() {
+    // ignore: discarded_futures
+    _save();
   }
 
   bool get _isEmpty => _title.text.trim().isEmpty && _body.text.trim().isEmpty;
@@ -151,7 +161,7 @@ class _EditNotePageState extends State<EditNotePage> {
       ));
   }
 
-  /// 选一张本地图片，降采样后存进附件仓，在光标处插入 Markdown 引用。
+  /// 选一张本地图片，降采样后存进附件仓，插入 Markdown 引用。
   Future<void> _insertImage() async {
     final messenger = ScaffoldMessenger.of(context);
     final app = context.read<AppState>();
@@ -162,24 +172,31 @@ class _EditNotePageState extends State<EditNotePage> {
     final bytes = file.bytes;
     if (bytes == null) return;
     final ref = await app.attachments.add(bytes, sourceExt: file.extension);
-
-    final text = _body.text;
-    final sel = _body.selection;
-    final at = (sel.isValid && sel.start >= 0 && sel.start <= text.length)
-        ? sel.start
-        : text.length;
-    final end = (sel.isValid && sel.end >= at && sel.end <= text.length)
-        ? sel.end
-        : at;
-    final pre = (at > 0 && text[at - 1] != '\n') ? '\n' : '';
-    final insert = '$pre![]($ref)\n';
-    final newText = text.replaceRange(at, end, insert);
-    _body.value = TextEditingValue(
-      text: newText,
-      selection: TextSelection.collapsed(offset: at + insert.length),
-    );
     if (!mounted) return;
-    await _save(); // 图片已入仓，把引用落库（并触发同步）
+
+    final blockState = _blockKey.currentState;
+    if (blockState != null) {
+      // 块级编辑器：追加一张图片块（内部已写回 _body 并触发保存）。
+      blockState.insertImageRef(ref);
+    } else {
+      // 文本框：在光标处插入引用。
+      final text = _body.text;
+      final sel = _body.selection;
+      final at = (sel.isValid && sel.start >= 0 && sel.start <= text.length)
+          ? sel.start
+          : text.length;
+      final end = (sel.isValid && sel.end >= at && sel.end <= text.length)
+          ? sel.end
+          : at;
+      final pre = (at > 0 && text[at - 1] != '\n') ? '\n' : '';
+      final insert = '$pre![]($ref)\n';
+      final newText = text.replaceRange(at, end, insert);
+      _body.value = TextEditingValue(
+        text: newText,
+        selection: TextSelection.collapsed(offset: at + insert.length),
+      );
+      await _save(); // 图片已入仓，把引用落库（并触发同步）
+    }
     if (!mounted) return;
     messenger.showSnackBar(const SnackBar(content: Text('已插入图片')));
   }
@@ -206,11 +223,12 @@ class _EditNotePageState extends State<EditNotePage> {
 
     final Widget body;
     if (live) {
-      body = _splitBody(theme, app);
+      // 实时预览(B)：默认块级所见即所得；⌘/Ctrl+P 切「整篇源码」逃生口。
+      body = _preview ? _editorBody(theme) : _blockBody(theme, app);
     } else if (_preview) {
       body = Focus(
         focusNode: _previewFocus,
-        child: _previewPane(theme, app, live: false),
+        child: _previewPane(theme, app),
       );
     } else {
       body = _editorBody(theme);
@@ -223,6 +241,7 @@ class _EditNotePageState extends State<EditNotePage> {
         onPopInvokedWithResult: (didPop, _) async {
           if (didPop) return;
           final nav = Navigator.of(context);
+          _blockKey.currentState?.commitPending(); // 提交块级编辑器待写入内容
           await _save();
           nav.pop();
         },
@@ -231,15 +250,18 @@ class _EditNotePageState extends State<EditNotePage> {
           appBar: AppBar(
             backgroundColor: bg,
             actions: [
-              // 实时预览开启时一直并排显示，无需切换按钮。
-              if (!live)
-                IconButton(
-                  tooltip: _preview ? '编辑 (⌘/Ctrl+P)' : '预览 (⌘/Ctrl+P)',
-                  icon: Icon(_preview
-                      ? Icons.edit_outlined
-                      : Icons.visibility_outlined),
-                  onPressed: _togglePreview,
-                ),
+              // 普通模式：编辑⇄预览；实时预览(B)模式：所见即所得⇄整篇源码。
+              IconButton(
+                tooltip: live
+                    ? (_preview ? '所见即所得 (⌘/Ctrl+P)' : '整篇源码 (⌘/Ctrl+P)')
+                    : (_preview ? '编辑 (⌘/Ctrl+P)' : '预览 (⌘/Ctrl+P)'),
+                icon: Icon(live
+                    ? (_preview ? Icons.article_outlined : Icons.code)
+                    : (_preview
+                        ? Icons.edit_outlined
+                        : Icons.visibility_outlined)),
+                onPressed: _togglePreview,
+              ),
               if (live || !_preview)
                 IconButton(
                   tooltip: '插入图片',
@@ -288,7 +310,7 @@ class _EditNotePageState extends State<EditNotePage> {
     );
   }
 
-  /// 全屏编辑：标题 + 正文输入框。
+  /// 全屏编辑：标题 + 正文输入框（也用作实时预览模式的「整篇源码」）。
   Widget _editorBody(ThemeData theme) => Padding(
         padding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
         child: _editorColumn(theme),
@@ -297,16 +319,7 @@ class _EditNotePageState extends State<EditNotePage> {
   Widget _editorColumn(ThemeData theme) => Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
-          TextField(
-            controller: _title,
-            textInputAction: TextInputAction.next,
-            style: theme.textTheme.titleLarge
-                ?.copyWith(fontWeight: FontWeight.bold),
-            decoration: const InputDecoration(
-              hintText: '标题',
-              border: InputBorder.none,
-            ),
-          ),
+          _titleField(theme),
           const Divider(height: 8),
           Expanded(
             child: TextField(
@@ -325,53 +338,49 @@ class _EditNotePageState extends State<EditNotePage> {
         ],
       );
 
-  /// 预览面板。[live]=true 时随输入实时重建。
-  Widget _previewPane(ThemeData theme, AppState app, {required bool live}) {
-    Widget content() => ListView(
-          padding: const EdgeInsets.fromLTRB(16, 8, 16, 24),
-          children: [
-            if (_title.text.trim().isNotEmpty)
-              Padding(
-                padding: const EdgeInsets.only(bottom: 10),
-                child: Text(_title.text,
-                    style: theme.textTheme.headlineSmall
-                        ?.copyWith(fontWeight: FontWeight.bold)),
-              ),
-            MarkdownView(data: _body.text, attachments: app.attachments),
-          ],
-        );
-    if (!live) return content();
-    return AnimatedBuilder(
-      animation: Listenable.merge([_title, _body]),
-      builder: (_, _) => content(),
-    );
-  }
+  Widget _titleField(ThemeData theme) => TextField(
+        controller: _title,
+        textInputAction: TextInputAction.next,
+        style:
+            theme.textTheme.titleLarge?.copyWith(fontWeight: FontWeight.bold),
+        decoration: const InputDecoration(
+          hintText: '标题',
+          border: InputBorder.none,
+        ),
+      );
 
-  /// 实时预览：宽屏左右分栏，窄屏上下分栏。
-  Widget _splitBody(ThemeData theme, AppState app) {
-    final wide = MediaQuery.of(context).size.width >= 720;
-    final editor = Padding(
-      padding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
-      child: _editorColumn(theme),
-    );
-    final preview = _previewPane(theme, app, live: true);
-    if (wide) {
-      return Row(
+  /// 实时预览(B)：标题 + 块级所见即所得编辑器。
+  Widget _blockBody(ThemeData theme, AppState app) => Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
-          Expanded(child: editor),
-          const VerticalDivider(width: 1),
-          Expanded(child: preview),
+          Padding(
+            padding: const EdgeInsets.fromLTRB(16, 0, 16, 0),
+            child: _titleField(theme),
+          ),
+          const Divider(height: 8),
+          Expanded(
+            child: BlockEditor(
+              key: _blockKey,
+              body: _body,
+              attachments: app.attachments,
+              onCommit: _onBlockCommit,
+            ),
+          ),
         ],
       );
-    }
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.stretch,
-      children: [
-        Expanded(child: editor),
-        const Divider(height: 1),
-        Expanded(child: preview),
-      ],
-    );
-  }
+
+  /// 全屏渲染预览（普通模式 ⌘/Ctrl+P）。
+  Widget _previewPane(ThemeData theme, AppState app) => ListView(
+        padding: const EdgeInsets.fromLTRB(16, 8, 16, 24),
+        children: [
+          if (_title.text.trim().isNotEmpty)
+            Padding(
+              padding: const EdgeInsets.only(bottom: 10),
+              child: Text(_title.text,
+                  style: theme.textTheme.headlineSmall
+                      ?.copyWith(fontWeight: FontWeight.bold)),
+            ),
+          MarkdownView(data: _body.text, attachments: app.attachments),
+        ],
+      );
 }

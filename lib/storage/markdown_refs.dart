@@ -103,3 +103,47 @@ String expandToc(String markdown) {
   // 前后各留一空行，避免目录列表和相邻段落黏在一起。
   return markdown.replaceAll(_tocRe, '\n${sb.toString().trimRight()}\n');
 }
+
+/// 把 Markdown 拆成"块"：以空行分隔的连续非空行各为一块；围栏代码块
+/// (``` / ~~~) 内部的空行不作为分隔。块级编辑器用它把整篇切成可单独编辑的单元。
+/// 反向用 `blocks.join('\n\n')` 还原（多余空行会被归一为一行）。
+List<String> splitBlocks(String text) {
+  final blocks = <String>[];
+  final cur = <String>[];
+  var inFence = false;
+  String? fenceChar;
+
+  void flush() {
+    while (cur.isNotEmpty && cur.last.trim().isEmpty) {
+      cur.removeLast();
+    }
+    if (cur.isNotEmpty) {
+      blocks.add(cur.join('\n'));
+      cur.clear();
+    }
+  }
+
+  for (final raw in text.split('\n')) {
+    final line = raw.endsWith('\r') ? raw.substring(0, raw.length - 1) : raw;
+    final fm = _fenceRe.firstMatch(line);
+    if (fm != null) {
+      final ch = fm.group(1)![0]; // ` 或 ~
+      if (!inFence) {
+        inFence = true;
+        fenceChar = ch;
+      } else if (fenceChar == ch) {
+        inFence = false;
+        fenceChar = null;
+      }
+      cur.add(line);
+      continue;
+    }
+    if (!inFence && line.trim().isEmpty) {
+      flush();
+    } else {
+      cur.add(line);
+    }
+  }
+  flush();
+  return blocks;
+}

@@ -145,8 +145,8 @@ class AppSettings extends ChangeNotifier {
         orElse: () => TextSizePref.normal,
       );
 
-  /// 编辑笔记时实时并排预览 Markdown（宽屏左右分栏、窄屏上下分栏）。默认关。
-  bool get livePreview => _prefs.getBool(_kLivePreview) ?? false;
+  /// 编辑笔记时块级“所见即所得”实时预览（Typora 式）。默认开。
+  bool get livePreview => _prefs.getBool(_kLivePreview) ?? true;
 
   /// 推送前若日志放大率过高自动整理一次。默认开。
   bool get autoCompactBeforeSync =>

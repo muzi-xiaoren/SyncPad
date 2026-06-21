@@ -9,16 +9,24 @@ import '../storage/markdown_refs.dart';
 /// - `http(s)://`：网络图
 /// - `data:`：内嵌 base64 图
 class MarkdownView extends StatelessWidget {
-  const MarkdownView({super.key, required this.data, required this.attachments});
+  const MarkdownView({
+    super.key,
+    required this.data,
+    required this.attachments,
+    this.selectable = true,
+  });
 
   final String data;
   final AttachmentStore attachments;
+
+  /// 是否可选中文本。块级编辑器里设 false，让点击落到"点我编辑"上而非起选区。
+  final bool selectable;
 
   @override
   Widget build(BuildContext context) {
     return MarkdownBody(
       data: expandToc(data),
-      selectable: true,
+      selectable: selectable,
       imageBuilder: (uri, title, alt) => _Img(
         uri: uri,
         alt: alt,

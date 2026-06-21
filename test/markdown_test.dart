@@ -61,6 +61,28 @@ void main() {
     });
   });
 
+  group('splitBlocks', () {
+    test('按空行切块，join 可还原', () {
+      const md = '# 标题\n\n第一段\n续行\n\n- a\n- b';
+      final blocks = splitBlocks(md);
+      expect(blocks, ['# 标题', '第一段\n续行', '- a\n- b']);
+      expect(blocks.join('\n\n'), md);
+    });
+
+    test('代码块内的空行不切块', () {
+      const md = '```\na\n\nb\n```\n\n后文';
+      expect(splitBlocks(md), ['```\na\n\nb\n```', '后文']);
+    });
+
+    test('多个空行归一、首尾空行忽略', () {
+      expect(splitBlocks('\n\n甲\n\n\n\n乙\n\n'), ['甲', '乙']);
+    });
+
+    test('空文本得到空列表', () {
+      expect(splitBlocks('   \n\n'), isEmpty);
+    });
+  });
+
   group('image prepare', () {
     test('normalizeImageExt / sniffImageExt', () {
       expect(normalizeImageExt('.JPEG'), 'jpg');

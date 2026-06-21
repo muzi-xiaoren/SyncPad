@@ -124,9 +124,9 @@ class SettingsPage extends StatelessWidget {
             ),
           ),
           SwitchListTile(
-            secondary: const Icon(Icons.vertical_split_outlined),
+            secondary: const Icon(Icons.auto_fix_high_outlined),
             title: const Text('实时预览 Markdown'),
-            subtitle: const Text('编辑时并排显示渲染效果（宽屏左右、窄屏上下分栏）'),
+            subtitle: const Text('像 Typora 那样直接渲染，点某块才编辑源码；关闭则纯文本 + 手动预览'),
             value: settings.livePreview,
             onChanged: settings.setLivePreview,
           ),
